@@ -116,6 +116,25 @@ class _HomePageState extends State<HomePage> {
     await _playback.togglePlayPause();
   }
 
+  void _onSongReorder(int oldIndex, int newIndex) {
+    setState(() {
+      if (newIndex > oldIndex) newIndex--;
+      final song = _deviceSongs.removeAt(oldIndex);
+      _deviceSongs.insert(newIndex, song);
+    });
+    if (kIsWeb) {
+      WebLibraryCache.instance.saveSongs(_deviceSongs);
+    }
+  }
+
+  void _onPlaylistReorder(int oldIndex, int newIndex) {
+    setState(() {
+      if (newIndex > oldIndex) newIndex--;
+      final pl = _manualPlaylists.removeAt(oldIndex);
+      _manualPlaylists.insert(newIndex, pl);
+    });
+  }
+
   void _onNavTap(int i) {
     setState(() => _currentTab = i);
   }
@@ -1037,13 +1056,18 @@ class _HomePageState extends State<HomePage> {
                     // Tab 0 = Music, Tab 2 = Library (1 is the create overlay).
                     index: _currentTab == 1 ? 1 : 0,
                     children: [
-                      SongsScreen(songs: _deviceSongs, onSongTap: _playSong),
+                      SongsScreen(
+                        songs: _deviceSongs,
+                        onSongTap: _playSong,
+                        onReorder: _onSongReorder,
+                      ),
                       LibraryPage(
                         library: _deviceSongs,
                         manualPlaylists: _manualPlaylists,
                         onSongTap: _playSong,
                         onTabChanged: (i) =>
                             setState(() => _libraryTabIndex = i),
+                        onPlaylistReorder: _onPlaylistReorder,
                       ),
                     ],
                   ),

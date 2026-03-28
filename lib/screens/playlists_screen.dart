@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -10,12 +11,14 @@ class PlaylistsScreen extends StatelessWidget {
   final List<Song> library;
   final List<Playlist> manualPlaylists;
   final void Function(List<Song> queue, int index)? onSongTap;
+  final void Function(int oldIndex, int newIndex)? onPlaylistReorder;
 
   const PlaylistsScreen({
     super.key,
     required this.library,
     this.manualPlaylists = const [],
     this.onSongTap,
+    this.onPlaylistReorder,
   });
 
   @override
@@ -101,17 +104,37 @@ class PlaylistsScreen extends StatelessWidget {
             ),
           )
         else
-          SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (context, index) {
-                final pl = manualPlaylists[index];
-                return _ManualPlaylistTile(
+          SliverReorderableList(
+            itemCount: manualPlaylists.length,
+            onReorder: (oldIndex, newIndex) {
+              onPlaylistReorder?.call(oldIndex, newIndex);
+            },
+            proxyDecorator: (child, index, animation) {
+              return AnimatedBuilder(
+                animation: animation,
+                builder: (context, child) {
+                  final elevation = lerpDouble(0, 6, animation.value)!;
+                  return Material(
+                    elevation: elevation,
+                    color: Colors.transparent,
+                    shadowColor: Colors.black54,
+                    child: child,
+                  );
+                },
+                child: child,
+              );
+            },
+            itemBuilder: (context, index) {
+              final pl = manualPlaylists[index];
+              return ReorderableDelayedDragStartListener(
+                key: ValueKey(pl.id ?? pl.name),
+                index: index,
+                child: _ManualPlaylistTile(
                   playlist: pl,
                   onSongTap: onSongTap,
-                );
-              },
-              childCount: manualPlaylists.length,
-            ),
+                ),
+              );
+            },
           ),
       ],
     );

@@ -15,6 +15,7 @@ class LibraryPage extends StatefulWidget {
   final void Function(List<Song> queue, int index)? onSongTap;
   final Map<String, String> albumCoverArtPaths;
   final ValueChanged<int>? onTabChanged;
+  final void Function(int oldIndex, int newIndex)? onPlaylistReorder;
 
   const LibraryPage({
     super.key,
@@ -23,6 +24,7 @@ class LibraryPage extends StatefulWidget {
     this.onSongTap,
     this.albumCoverArtPaths = const {},
     this.onTabChanged,
+    this.onPlaylistReorder,
   });
 
   @override
@@ -128,6 +130,7 @@ class _LibraryPageState extends State<LibraryPage>
                 library: widget.library,
                 manualPlaylists: widget.manualPlaylists,
                 onSongTap: widget.onSongTap,
+                onPlaylistReorder: widget.onPlaylistReorder,
               ),
               _AlbumsGrid(
                 library: widget.library,

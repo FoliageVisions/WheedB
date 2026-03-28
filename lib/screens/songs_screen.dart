@@ -1,3 +1,4 @@
+import 'dart:ui' show lerpDouble;
 import 'package:flutter/material.dart';
 import '../models/song.dart';
 import '../widgets/song_tile.dart';
@@ -5,8 +6,14 @@ import '../widgets/song_tile.dart';
 class SongsScreen extends StatefulWidget {
   final List<Song> songs;
   final void Function(List<Song> queue, int index)? onSongTap;
+  final void Function(int oldIndex, int newIndex)? onReorder;
 
-  const SongsScreen({super.key, required this.songs, this.onSongTap});
+  const SongsScreen({
+    super.key,
+    required this.songs,
+    this.onSongTap,
+    this.onReorder,
+  });
 
   @override
   State<SongsScreen> createState() => _SongsScreenState();
@@ -123,19 +130,37 @@ class _SongsScreenState extends State<SongsScreen> {
             ),
           )
         else
-          SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (context, index) {
-                final song = _filtered[index];
-                return SongTile(
-                  song: song,
-                  onTap: () {
-                    widget.onSongTap?.call(_filtered, index);
-                  },
-                );
-              },
-              childCount: _filtered.length,
-            ),
+          SliverReorderableList(
+            itemCount: _filtered.length,
+            onReorder: (oldIndex, newIndex) {
+              widget.onReorder?.call(oldIndex, newIndex);
+            },
+            proxyDecorator: (child, index, animation) {
+              return AnimatedBuilder(
+                animation: animation,
+                builder: (context, child) {
+                  final elevation = lerpDouble(0, 6, animation.value)!;
+                  return Material(
+                    elevation: elevation,
+                    color: Colors.transparent,
+                    shadowColor: Colors.black54,
+                    child: child,
+                  );
+                },
+                child: child,
+              );
+            },
+            itemBuilder: (context, index) {
+              final song = _filtered[index];
+              return SongTile(
+                key: ValueKey(song.fileName),
+                song: song,
+                reorderIndex: index,
+                onTap: () {
+                  widget.onSongTap?.call(_filtered, index);
+                },
+              );
+            },
           ),
       ],
     );

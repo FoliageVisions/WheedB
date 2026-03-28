@@ -4,8 +4,9 @@ import '../models/song.dart';
 class SongTile extends StatelessWidget {
   final Song song;
   final VoidCallback? onTap;
+  final int? reorderIndex;
 
-  const SongTile({super.key, required this.song, this.onTap});
+  const SongTile({super.key, required this.song, this.onTap, this.reorderIndex});
 
   String _formatDuration(Duration d) {
     final minutes = d.inMinutes;
@@ -17,7 +18,7 @@ class SongTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return InkWell(
+    final child = InkWell(
       onTap: onTap,
       // splashColor + highlightColor with short duration ensures the
       // 'pressed' highlight clears immediately after the tap ends.
@@ -78,5 +79,13 @@ class SongTile extends StatelessWidget {
         ),
       ),
     );
+
+    if (reorderIndex != null) {
+      return ReorderableDelayedDragStartListener(
+        index: reorderIndex!,
+        child: child,
+      );
+    }
+    return child;
   }
 }
