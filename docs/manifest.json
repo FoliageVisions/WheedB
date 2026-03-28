@@ -1,13 +1,16 @@
 {
     "name": "WheedB",
     "short_name": "WheedB",
+    "id": "/",
     "start_url": ".",
+    "scope": "/",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#121212",
+    "theme_color": "#121212",
+    "description": "Your personal music library.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
+    "categories": ["music", "entertainment"],
     "icons": [
         {
             "src": "icons/Icon-192.png",
