@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import '../controllers/music_player_controller.dart';
 import '../models/song.dart';
+import '../screens/now_playing_page.dart';
 
 /// Persistent playback control bar displayed at the bottom of the screen.
 class PlaybackBar extends StatelessWidget {
@@ -113,48 +114,75 @@ class PlaybackBar extends StatelessWidget {
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                   child: Row(
                     children: [
-                      // Song metadata column
+                      // Song metadata column — tap to open Now Playing
                       Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              song.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: theme.colorScheme.onSurface,
-                                fontWeight: FontWeight.w600,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              PageRouteBuilder(
+                                pageBuilder: (_, __, ___) =>
+                                    NowPlayingPage(controller: controller),
+                                transitionsBuilder: (_, anim, __, child) {
+                                  return SlideTransition(
+                                    position: Tween<Offset>(
+                                      begin: const Offset(0, 1),
+                                      end: Offset.zero,
+                                    ).animate(CurvedAnimation(
+                                      parent: anim,
+                                      curve: Curves.easeOutCubic,
+                                    )),
+                                    child: child,
+                                  );
+                                },
+                                transitionDuration:
+                                    const Duration(milliseconds: 300),
+                                reverseTransitionDuration:
+                                    const Duration(milliseconds: 250),
                               ),
-                            ),
-                            const SizedBox(height: 2),
-                            Row(
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    song.artist,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: theme.colorScheme.onSurfaceVariant,
+                            );
+                          },
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                song.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: theme.colorScheme.onSurface,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Row(
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      song.artist,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: theme.textTheme.bodySmall?.copyWith(
+                                        color: theme.colorScheme.onSurfaceVariant,
+                                      ),
                                     ),
                                   ),
-                                ),
-                                const SizedBox(width: 6),
-                                // Audio info label
-                                Text(
-                                  song.audioInfoLabel,
-                                  style: theme.textTheme.labelSmall?.copyWith(
-                                    color: theme.colorScheme.onSurfaceVariant
-                                        .withValues(alpha: 0.7),
+                                  const SizedBox(width: 6),
+                                  // Audio info label
+                                  Text(
+                                    song.audioInfoLabel,
+                                    style: theme.textTheme.labelSmall?.copyWith(
+                                      color: theme.colorScheme.onSurfaceVariant
+                                          .withValues(alpha: 0.7),
+                                    ),
                                   ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            // ── Quality badges ──
-                            _QualityBadges(song: song),
-                          ],
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              // ── Quality badges ──
+                              _QualityBadges(song: song),
+                            ],
+                          ),
                         ),
                       ),
 
