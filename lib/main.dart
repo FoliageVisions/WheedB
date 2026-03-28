@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:math' show min;
+import 'dart:typed_data';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
@@ -14,6 +16,8 @@ import 'models/playlist.dart';
 import 'models/song.dart';
 import 'screens/library_page.dart';
 import 'screens/songs_screen.dart';
+import 'services/audio_metadata.dart';
+import 'services/audio_prober.dart';
 import 'services/database_helper.dart';
 import 'services/cover_art_extractor.dart';
 import 'services/device_music_scanner.dart';
@@ -483,6 +487,25 @@ class _HomePageState extends State<HomePage> {
           artist = 'Unknown Artist';
         }
 
+        // ── Parse real audio metadata from file headers ──
+        Uint8List headerBytes;
+        int fileSize;
+
+        if (kIsWeb) {
+          headerBytes = file.bytes!;
+          fileSize = file.bytes!.length;
+        } else {
+          final ioFile = File(filePath!);
+          fileSize = await ioFile.length();
+          final raf = await ioFile.open(mode: FileMode.read);
+          headerBytes = await raf.read(min(8192, fileSize));
+          await raf.close();
+        }
+
+        final meta = AudioMetadataParser.parse(
+          headerBytes, fileName, fileSize: fileSize,
+        );
+
         imported.add(Song(
           title: title,
           artist: artist,
@@ -490,13 +513,38 @@ class _HomePageState extends State<HomePage> {
           fileName: fileName,
           filePath: filePath,
           audioBytes: kIsWeb ? file.bytes : null,
+          sampleRateHz: meta.sampleRateHz,
+          bitDepth: meta.bitDepth,
+          duration: meta.duration ?? Duration.zero,
         ));
 
         debugPrint('[WheedB Import] ✓ "$title" by $artist '
             '(path=${hasPath ? "yes" : "no"}, bytes=${hasBytes ? "${file.bytes!.length}B" : "no"})');
       }
 
-      // ── 4. Handle empty result ──────────────────────────────────
+      // ── 4. Probe duration on web for songs that header parsing missed ──
+      if (kIsWeb) {
+        final futures = <Future<void>>[];
+        for (int i = 0; i < imported.length; i++) {
+          if (imported[i].duration == Duration.zero &&
+              imported[i].audioBytes != null) {
+            final idx = i;
+            futures.add(
+              AudioProber.probeDuration(
+                bytes: imported[idx].audioBytes,
+                fileName: imported[idx].fileName,
+              ).then((dur) {
+                if (dur != null) {
+                  imported[idx] = imported[idx].copyWith(duration: dur);
+                }
+              }),
+            );
+          }
+        }
+        if (futures.isNotEmpty) await Future.wait(futures);
+      }
+
+      // ── 5. Handle empty result ──────────────────────────────────
       if (imported.isEmpty) {
         if (mounted && skipped > 0) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -513,7 +561,7 @@ class _HomePageState extends State<HomePage> {
         return;
       }
 
-      // ── 5. Playlist association (mobile only — DB unavailable on web) ──
+      // ── 6. Playlist association (mobile only — DB unavailable on web) ──
       if (!kIsWeb && targetPlaylist != null && targetPlaylist.id != null) {
         await DatabaseHelper.instance
             .addSongsToPlaylist(targetPlaylist.id!, imported);
@@ -540,7 +588,7 @@ class _HomePageState extends State<HomePage> {
         await _refreshPlaylists();
       }
 
-      // ── 6. Update UI state ──────────────────────────────────────
+      // ── 7. Update UI state ──────────────────────────────────────
       setState(() {
         if (kIsWeb) {
           // Deduplicate by fileName — reimported songs replace cached entries.
@@ -1073,7 +1121,9 @@ class _HomePageState extends State<HomePage> {
                     ],
                   ),
                 ),
-                PlaybackBar(controller: _playback),
+                RepaintBoundary(
+                  child: PlaybackBar(controller: _playback),
+                ),
               ],
             ),
       bottomNavigationBar: NavigationBar(

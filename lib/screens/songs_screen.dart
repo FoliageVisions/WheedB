@@ -152,13 +152,15 @@ class _SongsScreenState extends State<SongsScreen> {
             },
             itemBuilder: (context, index) {
               final song = _filtered[index];
-              return SongTile(
+              return RepaintBoundary(
                 key: ValueKey(song.fileName),
-                song: song,
-                reorderIndex: index,
-                onTap: () {
-                  widget.onSongTap?.call(_filtered, index);
-                },
+                child: SongTile(
+                  song: song,
+                  reorderIndex: index,
+                  onTap: () {
+                    widget.onSongTap?.call(_filtered, index);
+                  },
+                ),
               );
             },
           ),

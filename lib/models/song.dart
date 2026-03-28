@@ -81,6 +81,38 @@ class Song {
 
   /// Returns true if this song matches the given lowercase query.
   bool matchesQuery(String lowercaseQuery) => _searchKey.contains(lowercaseQuery);
+
+  Song copyWith({
+    int? id,
+    String? title,
+    String? artist,
+    String? album,
+    String? fileName,
+    String? filePath,
+    Uint8List? audioBytes,
+    Duration? duration,
+    DateTime? dateAdded,
+    int? playCount,
+    bool? isFavorite,
+    int? sampleRateHz,
+    int? bitDepth,
+  }) {
+    return Song(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      artist: artist ?? this.artist,
+      album: album ?? this.album,
+      fileName: fileName ?? this.fileName,
+      filePath: filePath ?? this.filePath,
+      audioBytes: audioBytes ?? this.audioBytes,
+      duration: duration ?? this.duration,
+      dateAdded: dateAdded ?? this.dateAdded,
+      playCount: playCount ?? this.playCount,
+      isFavorite: isFavorite ?? this.isFavorite,
+      sampleRateHz: sampleRateHz ?? this.sampleRateHz,
+      bitDepth: bitDepth ?? this.bitDepth,
+    );
+  }
 }
 
 /// Maintains a pre-built index over a list of songs for sub-50ms filtering.
