@@ -1,10 +1,12 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'controllers/music_player_controller.dart';
 import 'models/audio_settings.dart';
 import 'models/playlist.dart';
@@ -247,76 +249,199 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _importFromFiles({Playlist? targetPlaylist}) async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['mp3', 'wav', 'flac'],
-      allowMultiple: true,
-    );
-
-    if (result == null || result.files.isEmpty) return; // user cancelled
-
-    final imported = <Song>[];
-    for (final file in result.files) {
-      if (file.path == null) continue;
-
-      final fileName = file.name;
-      final nameWithoutExt = p.basenameWithoutExtension(fileName);
-
-      // Best-effort title/artist split on " - " convention.
-      String title;
-      String artist;
-      if (nameWithoutExt.contains(' - ')) {
-        final parts = nameWithoutExt.split(' - ');
-        artist = parts.first.trim();
-        title = parts.sublist(1).join(' - ').trim();
+    // ── 1. Permission check (mobile only) ──────────────────────────
+    if (!kIsWeb) {
+      PermissionStatus status;
+      // Android 13+ uses READ_MEDIA_AUDIO; older versions use storage.
+      if (Platform.isAndroid) {
+        status = await Permission.audio.request();
+        if (!status.isGranted) {
+          status = await Permission.storage.request();
+        }
       } else {
-        title = nameWithoutExt;
-        artist = 'Unknown Artist';
+        // iOS: media library permission.
+        status = await Permission.mediaLibrary.request();
       }
 
-      imported.add(Song(
-        title: title,
-        artist: artist,
-        album: 'Imported',
-        fileName: fileName,
-        filePath: file.path,
-      ));
-    }
-
-    if (imported.isEmpty) return;
-
-    if (targetPlaylist != null && targetPlaylist.id != null) {
-      // Add to specific playlist in the database.
-      await DatabaseHelper.instance
-          .addSongsToPlaylist(targetPlaylist.id!, imported);
-
-      // Auto-extract cover art only when the user hasn't manually set one.
-      if (!targetPlaylist.isManualCover) {
-        final filePaths = imported
-            .where((s) => s.filePath != null)
-            .map((s) => s.filePath!)
-            .toList();
-        final artPath = await CoverArtExtractor.instance.extractAndSave(
-          filePaths: filePaths,
-          collectionId: targetPlaylist.id!,
-          collectionType: 'playlist',
-        );
-        if (artPath != null) {
-          await DatabaseHelper.instance.updateCoverArt(
-            id: targetPlaylist.id!,
-            isPlaylist: true,
-            path: artPath,
+      if (status.isPermanentlyDenied) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text(
+                'Audio permission permanently denied. '
+                'Please enable it in Settings.',
+              ),
+              behavior: SnackBarBehavior.floating,
+              action: SnackBarAction(
+                label: 'Settings',
+                onPressed: openAppSettings,
+              ),
+            ),
           );
         }
+        debugPrint('[WheedB Import] Permission permanently denied');
+        return;
       }
 
-      await _refreshPlaylists();
+      if (!status.isGranted && !status.isLimited) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Audio permission denied. Cannot import files.'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        debugPrint('[WheedB Import] Permission denied: $status');
+        return;
+      }
     }
 
-    // Always add to the in-memory library so songs are playable.
-    setState(() {
-      _deviceSongs = [..._deviceSongs, ...imported];
-    });
+    // ── 2. Pick files ──────────────────────────────────────────────
+    try {
+      debugPrint('[WheedB Import] Opening file picker (kIsWeb=$kIsWeb)');
+
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.audio,
+        allowMultiple: true,
+        withData: kIsWeb, // Bytes needed on web; mobile uses file paths.
+      );
+
+      if (result == null || result.files.isEmpty) {
+        debugPrint('[WheedB Import] User cancelled picker');
+        return;
+      }
+
+      debugPrint('[WheedB Import] Picked ${result.files.length} file(s)');
+
+      // ── 3. Build Song objects (hybrid: path on mobile, bytes on web) ──
+      final imported = <Song>[];
+      int skipped = 0;
+
+      for (final file in result.files) {
+        // On mobile we need a path; on web we need bytes.
+        final hasPath = file.path != null && file.path!.isNotEmpty;
+        final hasBytes = file.bytes != null && file.bytes!.isNotEmpty;
+
+        if (!hasPath && !hasBytes) {
+          debugPrint('[WheedB Import] Skipped "${file.name}" – no path or bytes');
+          skipped++;
+          continue;
+        }
+
+        final fileName = file.name;
+        final nameWithoutExt = p.basenameWithoutExtension(fileName);
+
+        // Best-effort title/artist split on " - " convention.
+        String title;
+        String artist;
+        if (nameWithoutExt.contains(' - ')) {
+          final parts = nameWithoutExt.split(' - ');
+          artist = parts.first.trim();
+          title = parts.sublist(1).join(' - ').trim();
+        } else {
+          title = nameWithoutExt;
+          artist = 'Unknown Artist';
+        }
+
+        imported.add(Song(
+          title: title,
+          artist: artist,
+          album: 'Imported',
+          fileName: fileName,
+          filePath: file.path,
+          audioBytes: kIsWeb ? file.bytes : null,
+        ));
+
+        debugPrint('[WheedB Import] ✓ "$title" by $artist '
+            '(path=${hasPath ? "yes" : "no"}, bytes=${hasBytes ? "${file.bytes!.length}B" : "no"})');
+      }
+
+      // ── 4. Handle empty result ──────────────────────────────────
+      if (imported.isEmpty) {
+        if (mounted && skipped > 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Could not access $skipped selected file${skipped == 1 ? '' : 's'}. '
+                'Try selecting files from local storage.',
+              ),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        debugPrint('[WheedB Import] All $skipped files skipped');
+        return;
+      }
+
+      // ── 5. Playlist association (mobile only — DB unavailable on web) ──
+      if (!kIsWeb && targetPlaylist != null && targetPlaylist.id != null) {
+        await DatabaseHelper.instance
+            .addSongsToPlaylist(targetPlaylist.id!, imported);
+
+        if (!targetPlaylist.isManualCover) {
+          final filePaths = imported
+              .where((s) => s.filePath != null)
+              .map((s) => s.filePath!)
+              .toList();
+          final artPath = await CoverArtExtractor.instance.extractAndSave(
+            filePaths: filePaths,
+            collectionId: targetPlaylist.id!,
+            collectionType: 'playlist',
+          );
+          if (artPath != null) {
+            await DatabaseHelper.instance.updateCoverArt(
+              id: targetPlaylist.id!,
+              isPlaylist: true,
+              path: artPath,
+            );
+          }
+        }
+
+        await _refreshPlaylists();
+      }
+
+      // ── 6. Update UI state ──────────────────────────────────────
+      setState(() {
+        _deviceSongs = [..._deviceSongs, ...imported];
+      });
+
+      debugPrint('[WheedB Import] Added ${imported.length} song(s). '
+          'Total library: ${_deviceSongs.length}');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Imported ${imported.length} song${imported.length == 1 ? '' : 's'}'
+              '${skipped > 0 ? ' ($skipped skipped)' : ''}',
+            ),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } on PlatformException catch (e) {
+      debugPrint('[WheedB Import] PlatformException: ${e.code} – ${e.message}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Import error: ${e.message ?? e.code}'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e, st) {
+      debugPrint('[WheedB Import] Unexpected error: $e\n$st');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Import failed: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
   }
 
   // ── Library three-dots action handlers ───────────────────────────

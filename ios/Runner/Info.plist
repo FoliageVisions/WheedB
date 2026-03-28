@@ -65,6 +65,8 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>WheedB needs access to your documents to import music files.</string>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

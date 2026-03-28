@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 class Song {
   final int? id;
   final String title;
@@ -6,6 +8,9 @@ class Song {
   final String fileName;
   final String? filePath;
   final Duration duration;
+
+  /// Raw audio bytes for web playback (null on mobile where filePath is used).
+  final Uint8List? audioBytes;
 
   /// Date the song was added to the library.
   final DateTime dateAdded;
@@ -63,6 +68,7 @@ class Song {
     required this.album,
     required this.fileName,
     this.filePath,
+    this.audioBytes,
     this.duration = Duration.zero,
     DateTime? dateAdded,
     this.playCount = 0,

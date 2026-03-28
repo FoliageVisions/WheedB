@@ -113,7 +113,7 @@ class ImportMusicSheet extends StatelessWidget {
                 ),
               ),
               subtitle: Text(
-                'Select MP3, WAV, or FLAC files',
+                'Select audio files from your device',
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: 0.4),
                   fontSize: 12,

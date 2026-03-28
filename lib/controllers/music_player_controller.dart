@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_service/audio_service.dart';
@@ -110,21 +111,25 @@ class MusicPlayerController extends ChangeNotifier {
 
     // Build a concatenating source for gapless transitions.
     final sources = songs.map((s) {
+      final tag = MediaItem(
+        id: s.fileName,
+        title: s.title,
+        artist: s.artist,
+        album: s.album,
+        duration: s.duration,
+      );
+
+      // Web imports carry in-memory bytes; mobile imports carry file paths.
+      if (s.audioBytes != null) {
+        return _BytesAudioSource(s.audioBytes!, tag: tag);
+      }
+
       // For device files the fileName is an absolute path or content URI.
       // AudioSource.uri handles both "file://" and "content://" schemes.
       final uri = s.filePath != null
           ? Uri.parse(s.filePath!)
           : Uri.file(s.fileName);
-      return AudioSource.uri(
-        uri,
-        tag: MediaItem(
-          id: s.fileName,
-          title: s.title,
-          artist: s.artist,
-          album: s.album,
-          duration: s.duration,
-        ),
-      );
+      return AudioSource.uri(uri, tag: tag);
     }).toList();
 
     await _player!.setAudioSource(
@@ -246,5 +251,29 @@ class AudioInfo {
         ? '${frequencyKHz.round()}'
         : frequencyKHz.toStringAsFixed(1);
     return '$freqStr kHz/$bitDepth-bit';
+  }
+}
+
+/// A [StreamAudioSource] that serves audio from an in-memory [Uint8List].
+/// Used for web imports where only bytes (not file paths) are available.
+// ignore: subtype_of_sealed_class
+class _BytesAudioSource extends StreamAudioSource {
+  final Uint8List _bytes;
+
+  _BytesAudioSource(this._bytes, {super.tag});
+
+  @override
+  Future<StreamAudioResponse> request([int? start, int? end]) async {
+    final effectiveStart = start ?? 0;
+    final effectiveEnd = end ?? _bytes.length;
+    return StreamAudioResponse(
+      sourceLength: _bytes.length,
+      contentLength: effectiveEnd - effectiveStart,
+      offset: effectiveStart,
+      stream: Stream.value(
+        _bytes.sublist(effectiveStart, effectiveEnd),
+      ),
+      contentType: 'audio/mpeg',
+    );
   }
 }
