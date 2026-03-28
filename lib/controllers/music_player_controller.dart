@@ -12,7 +12,7 @@ import '../services/audio_handler.dart';
 /// PlaybackController so all existing UI widgets work unchanged.
 class MusicPlayerController extends ChangeNotifier {
   AudioPlayer? _player;
-  YourTuneAudioHandler? _handler;
+  WheedBAudioHandler? _handler;
   bool _initialised = false;
 
   List<Song> _queue = [];
@@ -54,11 +54,11 @@ class MusicPlayerController extends ChangeNotifier {
 
     _player = AudioPlayer();
 
-    _handler = await AudioService.init<YourTuneAudioHandler>(
-      builder: () => YourTuneAudioHandler(_player!),
+    _handler = await AudioService.init<WheedBAudioHandler>(
+      builder: () => WheedBAudioHandler(_player!),
       config: const AudioServiceConfig(
-        androidNotificationChannelId: 'com.yourtune.audio',
-        androidNotificationChannelName: 'YourTune Playback',
+        androidNotificationChannelId: 'com.wheedb.audio',
+        androidNotificationChannelName: 'WheedB Playback',
         androidNotificationOngoing: true,
         androidStopForegroundOnPause: true,
       ),

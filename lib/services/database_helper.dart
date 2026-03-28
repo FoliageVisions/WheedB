@@ -18,7 +18,7 @@ class DatabaseHelper {
 
   Future<Database> _initDatabase() async {
     final dbPath = await getDatabasesPath();
-    final path = join(dbPath, 'yourtune.db');
+    final path = join(dbPath, 'wheedb.db');
 
     return openDatabase(
       path,

@@ -4,10 +4,10 @@ import 'package:just_audio/just_audio.dart';
 
 /// AudioHandler that bridges just_audio with audio_service for background
 /// playback and lock-screen / notification controls.
-class YourTuneAudioHandler extends BaseAudioHandler with SeekHandler {
+class WheedBAudioHandler extends BaseAudioHandler with SeekHandler {
   final AudioPlayer _player;
 
-  YourTuneAudioHandler(this._player) {
+  WheedBAudioHandler(this._player) {
     // Forward player state to audio_service's playbackState stream.
     _player.playbackEventStream.map(_transformEvent).pipe(playbackState);
   }

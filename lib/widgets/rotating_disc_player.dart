@@ -10,7 +10,7 @@ enum DiscType { cd, vinyl }
 /// * Rotation **decelerates** over ~600 ms when [isPlaying] becomes false,
 ///   giving a heavy, physical feel instead of snapping to a stop.
 /// * The disc visual is wrapped in a [RepaintBoundary] so the 60 fps rotation
-///   doesn't dirty the rest of the YourTune widget tree.
+///   doesn't dirty the rest of the WheedB widget tree.
 /// * [DiscType] can be switched at any time via the parent; only the static
 ///   disc child rebuilds — the animation controller is untouched.
 class RotatingDiscPlayer extends StatefulWidget {
