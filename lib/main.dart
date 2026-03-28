@@ -116,9 +116,8 @@ class _HomePageState extends State<HomePage> {
     super.dispose();
   }
 
-  Future<void> _playSong(List<Song> queue, int index) async {
-    await _playback.loadQueue(queue, startIndex: index);
-    await _playback.togglePlayPause();
+  void _playSong(List<Song> queue, int index) {
+    _playback.playTrack(queue, index: index);
   }
 
   void _onSongReorder(int oldIndex, int newIndex) {

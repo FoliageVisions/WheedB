@@ -111,37 +111,96 @@ class MusicPlayerController extends ChangeNotifier {
 
   // ── Queue management ──
 
+  /// Identity of the currently loaded audio source (fileNames in order).
+  /// Used to skip expensive [setAudioSource] rebuilds when the same
+  /// queue is tapped again at a different index.
+  List<String> _loadedQueueIds = [];
+
+  /// Play a specific track. Reuses the loaded audio source when the
+  /// queue hasn't changed, and updates UI state optimistically before
+  /// any async work so the "playing" indicator appears instantly.
+  Future<void> playTrack(List<Song> songs, {required int index}) async {
+    if (_player == null) return;
+
+    final clampedIndex = index.clamp(0, songs.length - 1);
+
+    // ── Optimistic state: update UI before any I/O ──
+    _queue = List.of(songs);
+    _currentIndex = clampedIndex;
+    _isPlaying = true;
+    _position = Duration.zero;
+    _emitAudioInfo();
+    notifyListeners();
+
+    try {
+      // ── Fast path: same queue → seek to new index only ──
+      if (_matchesLoadedQueue(songs)) {
+        await _player!.seek(Duration.zero, index: clampedIndex);
+        if (!_player!.playing) await _player!.play();
+        return;
+      }
+
+      // ── Slow path: build new ConcatenatingAudioSource ──
+      _loadedQueueIds = songs.map((s) => s.fileName).toList();
+
+      final sources = songs.map(_buildSource).toList();
+
+      await _player!.setAudioSource(
+        ConcatenatingAudioSource(children: sources),
+        initialIndex: clampedIndex,
+        initialPosition: Duration.zero,
+      );
+
+      await _player!.play();
+    } catch (e) {
+      debugPrint('[WheedB] playTrack error: $e');
+      _isPlaying = false;
+      notifyListeners();
+    }
+  }
+
+  /// Build an [AudioSource] for a single [Song].
+  AudioSource _buildSource(Song s) {
+    final tag = MediaItem(
+      id: s.fileName,
+      title: s.title,
+      artist: s.artist,
+      album: s.album,
+      duration: s.duration,
+    );
+
+    if (s.audioBytes != null) {
+      return _BytesAudioSource(
+        s.audioBytes!,
+        tag: tag,
+        contentType: _BytesAudioSource.mimeForExtension(s.fileName),
+      );
+    }
+
+    final uri = s.filePath != null
+        ? Uri.parse(s.filePath!)
+        : Uri.file(s.fileName);
+    return AudioSource.uri(uri, tag: tag);
+  }
+
+  /// Returns true when the given song list matches the already-loaded
+  /// audio source, avoiding an expensive rebuild.
+  bool _matchesLoadedQueue(List<Song> songs) {
+    if (_loadedQueueIds.length != songs.length) return false;
+    for (int i = 0; i < songs.length; i++) {
+      if (songs[i].fileName != _loadedQueueIds[i]) return false;
+    }
+    return true;
+  }
+
+  /// Legacy loader — kept for any non-playback queue setup.
   Future<void> loadQueue(List<Song> songs, {int startIndex = 0}) async {
     if (_player == null) return;
     _queue = List.of(songs);
     _currentIndex = startIndex.clamp(0, _queue.length - 1);
 
-    // Build a concatenating source for gapless transitions.
-    final sources = songs.map((s) {
-      final tag = MediaItem(
-        id: s.fileName,
-        title: s.title,
-        artist: s.artist,
-        album: s.album,
-        duration: s.duration,
-      );
-
-      // Web imports carry in-memory bytes; mobile imports carry file paths.
-      if (s.audioBytes != null) {
-        return _BytesAudioSource(
-          s.audioBytes!,
-          tag: tag,
-          contentType: _BytesAudioSource.mimeForExtension(s.fileName),
-        );
-      }
-
-      // For device files the fileName is an absolute path or content URI.
-      // AudioSource.uri handles both "file://" and "content://" schemes.
-      final uri = s.filePath != null
-          ? Uri.parse(s.filePath!)
-          : Uri.file(s.fileName);
-      return AudioSource.uri(uri, tag: tag);
-    }).toList();
+    _loadedQueueIds = songs.map((s) => s.fileName).toList();
+    final sources = songs.map(_buildSource).toList();
 
     await _player!.setAudioSource(
       ConcatenatingAudioSource(children: sources),
