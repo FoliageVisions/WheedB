@@ -2,11 +2,11 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../models/song.dart';
 
-/// Lightweight playback state manager.
-///
-/// Simulates playback with a periodic timer so the UI can be developed and
-/// tested without a real audio engine. Replace the timer with actual audio
-/// player callbacks when integrating a plugin like just_audio.
+/// **DEPRECATED** — This was the original simulated playback controller.
+/// It has been fully replaced by [MusicPlayerController] which uses
+/// just_audio + audio_service. This file is not imported anywhere and
+/// can be safely deleted.
+@Deprecated('Use MusicPlayerController instead')
 class PlaybackController extends ChangeNotifier {
   List<Song> _queue = [];
   int _currentIndex = -1;

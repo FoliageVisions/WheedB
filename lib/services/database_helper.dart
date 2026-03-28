@@ -173,9 +173,23 @@ class DatabaseHelper {
     await db.update(table, values, where: 'id = ?', whereArgs: [id]);
   }
 
-  /// Adds songs to a playlist.
+  /// Adds songs to a playlist, skipping any that are already present
+  /// (matched by file_name).
   Future<void> addSongsToPlaylist(int playlistId, List<Song> songs) async {
     final db = await database;
+
+    // Find which file names already exist in this playlist.
+    final existing = await db.query(
+      'playlist_songs',
+      columns: ['file_name'],
+      where: 'playlist_id = ?',
+      whereArgs: [playlistId],
+    );
+    final existingFileNames = existing.map((r) => r['file_name'] as String).toSet();
+
+    final toAdd = songs.where((s) => !existingFileNames.contains(s.fileName)).toList();
+    if (toAdd.isEmpty) return;
+
     final batch = db.batch();
 
     // Get current max sort_order for this playlist.
@@ -185,7 +199,7 @@ class DatabaseHelper {
     );
     var order = (result.first['max_order'] as int) + 1;
 
-    for (final song in songs) {
+    for (final song in toAdd) {
       batch.insert('playlist_songs', {
         'playlist_id': playlistId,
         'title': song.title,
@@ -221,5 +235,15 @@ class DatabaseHelper {
     final db = await database;
     final table = isPlaylist ? 'playlists' : 'albums';
     await db.delete(table, where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Removes a single song from a playlist by matching file_name.
+  Future<void> removeSongFromPlaylist(int playlistId, String fileName) async {
+    final db = await database;
+    await db.delete(
+      'playlist_songs',
+      where: 'playlist_id = ? AND file_name = ?',
+      whereArgs: [playlistId, fileName],
+    );
   }
 }

@@ -7,12 +7,18 @@ class SongsScreen extends StatefulWidget {
   final List<Song> songs;
   final void Function(List<Song> queue, int index)? onSongTap;
   final void Function(int oldIndex, int newIndex)? onReorder;
+  final void Function(Song song)? onFavoriteToggle;
+  final void Function(Song song, SongTileAction action)? onMenuAction;
+  final Song? nowPlaying;
 
   const SongsScreen({
     super.key,
     required this.songs,
     this.onSongTap,
     this.onReorder,
+    this.onFavoriteToggle,
+    this.onMenuAction,
+    this.nowPlaying,
   });
 
   @override
@@ -20,7 +26,7 @@ class SongsScreen extends StatefulWidget {
 }
 
 class _SongsScreenState extends State<SongsScreen> {
-  late final SongSearchIndex _searchIndex;
+  late SongSearchIndex _searchIndex;
   late List<Song> _filtered;
   final _searchController = TextEditingController();
 
@@ -159,9 +165,16 @@ class _SongsScreenState extends State<SongsScreen> {
                 child: SongTile(
                   song: song,
                   reorderIndex: index,
+                  isPlaying: identical(song, widget.nowPlaying),
                   onTap: () {
                     widget.onSongTap?.call(_filtered, index);
                   },
+                  onFavoriteToggle: widget.onFavoriteToggle != null
+                      ? () => widget.onFavoriteToggle!(song)
+                      : null,
+                  onMenuAction: widget.onMenuAction != null
+                      ? (action) => widget.onMenuAction!(song, action)
+                      : null,
                 ),
               );
             },

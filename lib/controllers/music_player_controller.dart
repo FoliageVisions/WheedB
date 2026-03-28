@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_service/audio_service.dart';
@@ -8,8 +7,9 @@ import '../services/audio_handler.dart';
 
 /// Production music-player controller backed by just_audio + audio_service.
 ///
-/// Maintains the same public API surface as the old simulated
-/// PlaybackController so all existing UI widgets work unchanged.
+/// Single source of truth for playback state. All UI listens to this
+/// ChangeNotifier — there is exactly ONE set of stream subscriptions
+/// (created in [init]) and no duplicated state tracking.
 class MusicPlayerController extends ChangeNotifier {
   AudioPlayer? _player;
   WheedBAudioHandler? _handler;
@@ -32,16 +32,18 @@ class MusicPlayerController extends ChangeNotifier {
   bool _shuffleEnabled = false;
   LoopMode _loopMode = LoopMode.off;
 
+  /// Monotonically increasing operation ID. Each [playTrack] call bumps
+  /// this counter; stale async continuations compare their captured id
+  /// against the current value and bail out if it no longer matches.
+  /// This prevents two rapid taps from fighting over setAudioSource/play.
+  int _playOpId = 0;
+
   /// When true, stream listeners won't overwrite optimistic state.
   /// Prevents the playingStream from flipping _isPlaying back to false
   /// during setAudioSource.
   bool _suppressStreams = false;
 
-  // ── Audio metadata stream ──
-  final _audioInfoController = StreamController<AudioInfo>.broadcast();
-  Stream<AudioInfo> get audioInfoStream => _audioInfoController.stream;
-
-  // ── Public getters (same shape as old PlaybackController) ──
+  // ── Public getters ──
   Song? get currentSong =>
       (_currentIndex >= 0 && _currentIndex < _queue.length)
           ? _queue[_currentIndex]
@@ -77,44 +79,58 @@ class MusicPlayerController extends ChangeNotifier {
     }
 
     // Position stream → update _position + notify UI.
-    // Throttled: only notify when the position changes by ≥500ms to avoid
-    // flooding the widget tree with 5 rebuilds/sec.
     _subs.add(_player!.positionStream.listen((pos) {
-      final changed = (pos.inMilliseconds - _position.inMilliseconds).abs() >= 500 ||
-          pos == Duration.zero;
+      if (_suppressStreams) return;
       _position = pos;
-      if (changed) notifyListeners();
+      notifyListeners();
     }));
 
     // Duration stream → update _duration.
+    // Also re-emit the media item so the lock-screen progress bar
+    // gets the real duration (imported files start with Duration.zero
+    // until setAudioSource resolves the actual length).
     _subs.add(_player!.durationStream.listen((dur) {
-      _duration = dur ?? Duration.zero;
-      notifyListeners();
-    }));
-
-    // Playing state — suppressed during playTrack() to avoid overwriting
-    // optimistic _isPlaying = true with a transient false from setAudioSource.
-    _subs.add(_player!.playingStream.listen((playing) {
-      if (_suppressStreams) return;
-      _isPlaying = playing;
-      notifyListeners();
-    }));
-
-    // Current index changes (e.g. auto-advance).
-    _subs.add(_player!.currentIndexStream.listen((idx) {
-      if (_suppressStreams) return;
-      if (idx != null && idx != _currentIndex && idx < _queue.length) {
-        _currentIndex = idx;
-        _emitAudioInfo();
+      final newDur = dur ?? Duration.zero;
+      if (newDur != _duration) {
+        _duration = newDur;
+        _updateMediaItem();
         notifyListeners();
       }
     }));
 
-    // When a track completes and we aren't looping, just_audio handles the
-    // advance via ConcatenatingAudioSource; we listen for the sequence change.
-    _subs.add(_player!.processingStateStream.listen((state) {
-      if (state == ProcessingState.completed) {
+    // Playing state — the single source of truth for _isPlaying.
+    // Suppressed during playTrack() to avoid overwriting optimistic state
+    // with a transient false from setAudioSource.
+    _subs.add(_player!.playingStream.listen((playing) {
+      if (_suppressStreams) return;
+      if (playing != _isPlaying) {
+        _isPlaying = playing;
         notifyListeners();
+      }
+    }));
+
+    // Current index changes (e.g. auto-advance at track boundary).
+    // Suppressed during playTrack()/skip to avoid double-notification.
+    _subs.add(_player!.currentIndexStream.listen((idx) {
+      if (_suppressStreams) return;
+      if (idx != null && idx != _currentIndex && idx < _queue.length) {
+        _currentIndex = idx;
+        _updateMediaItem();
+        notifyListeners();
+      }
+    }));
+
+    // When the entire queue finishes (no loop), transition to stopped.
+    _subs.add(_player!.processingStateStream.listen((state) {
+      if (_suppressStreams) return;
+      if (state == ProcessingState.completed) {
+        // The queue has ended. Update our state so UI shows paused.
+        // playingStream will also fire false, but we gate on != to
+        // avoid a redundant second notifyListeners().
+        if (_isPlaying) {
+          _isPlaying = false;
+          notifyListeners();
+        }
       }
     }));
 
@@ -131,17 +147,25 @@ class MusicPlayerController extends ChangeNotifier {
   /// Play a specific track. Reuses the loaded audio source when the
   /// queue hasn't changed, and updates UI state optimistically before
   /// any async work so the "playing" indicator appears instantly.
+  ///
+  /// Safe against rapid taps: each call bumps [_playOpId]; stale
+  /// continuations detect the mismatch and bail out.
   Future<void> playTrack(List<Song> songs, {required int index}) async {
     if (_player == null) return;
 
     final clampedIndex = index.clamp(0, songs.length - 1);
+
+    // Bump the operation counter — any in-flight playTrack() with an
+    // older id will see the mismatch after its awaits and bail out.
+    final opId = ++_playOpId;
 
     // ── Optimistic state: update UI before any I/O ──
     _queue = List.of(songs);
     _currentIndex = clampedIndex;
     _isPlaying = true;
     _position = Duration.zero;
-    _emitAudioInfo();
+    _updateMediaItem();
+    _updateQueue();
     notifyListeners();
 
     // Suppress stream listeners so they don't overwrite our optimistic
@@ -152,69 +176,39 @@ class MusicPlayerController extends ChangeNotifier {
       // ── Fast path: same queue → seek to new index only ──
       if (_matchesLoadedQueue(songs)) {
         await _player!.seek(Duration.zero, index: clampedIndex);
+        if (opId != _playOpId) { _suppressStreams = false; return; }
         _suppressStreams = false;
         if (!_player!.playing) await _player!.play();
         return;
       }
 
-      // ── Build a single-track source for instant start, then fill the
-      // queue in the background for gapless next/prev. ──
+      // ── Build the full queue upfront so the player never needs to
+      // mutate a ConcatenatingAudioSource during active playback
+      // (which causes audible clicks / pops on Android & iOS). ──
       _loadedQueueIds = songs.map((s) => s.fileName).toList();
 
-      // Load ONLY the tapped track first.
-      final tappedSource = _buildSource(songs[clampedIndex]);
+      final sources = songs.map(_buildSource).toList();
 
       await _player!.setAudioSource(
-        ConcatenatingAudioSource(children: [tappedSource]),
-        initialIndex: 0,
+        ConcatenatingAudioSource(children: sources),
+        initialIndex: clampedIndex,
         initialPosition: Duration.zero,
       );
 
+      if (opId != _playOpId) { _suppressStreams = false; return; }
       _suppressStreams = false;
       await _player!.play();
-
-      // ── Backfill the rest of the queue asynchronously ──
-      // This lets next/prev work without blocking the initial play.
-      _backfillQueue(songs, playingIndex: clampedIndex);
     } catch (e) {
       debugPrint('[WheedB] playTrack error: $e');
-      _suppressStreams = false;
-      _isPlaying = false;
-      notifyListeners();
-    }
-  }
-
-  /// Replaces the single-track ConcatenatingAudioSource with the full
-  /// queue so skip-next / skip-prev / auto-advance work.
-  Future<void> _backfillQueue(List<Song> songs, {required int playingIndex}) async {
-    if (_player == null) return;
-    try {
-      final source = _player!.audioSource;
-      if (source is! ConcatenatingAudioSource) return;
-
-      // Build all other sources.
-      final before = <AudioSource>[];
-      final after = <AudioSource>[];
-      for (int i = 0; i < songs.length; i++) {
-        if (i == playingIndex) continue;
-        final s = _buildSource(songs[i]);
-        if (i < playingIndex) {
-          before.add(s);
-        } else {
-          after.add(s);
-        }
+      if (opId == _playOpId) {
+        _suppressStreams = false;
+        _isPlaying = false;
+        notifyListeners();
       }
-
-      // Insert items around the already-playing track.
-      if (after.isNotEmpty) await source.addAll(after);
-      if (before.isNotEmpty) await source.insertAll(0, before);
-
-      // Update _currentIndex to account for the inserted items.
-      _currentIndex = playingIndex;
-    } catch (e) {
-      debugPrint('[WheedB] _backfillQueue error: $e');
     }
   }
+
+
 
   /// Build an [AudioSource] for a single [Song].
   AudioSource _buildSource(Song s) {
@@ -234,9 +228,18 @@ class MusicPlayerController extends ChangeNotifier {
       );
     }
 
-    final uri = s.filePath != null
-        ? Uri.parse(s.filePath!)
-        : Uri.file(s.fileName);
+    // filePath may be a filesystem path ("/var/…") from file_picker
+    // or a URI string ("content://…", "file://…") from on_audio_query.
+    // Uri.file() is needed for bare paths; Uri.parse() for existing URIs.
+    final path = s.filePath;
+    final Uri uri;
+    if (path != null) {
+      uri = (path.startsWith('/'))
+          ? Uri.file(path)
+          : Uri.parse(path);
+    } else {
+      uri = Uri.file(s.fileName);
+    }
     return AudioSource.uri(uri, tag: tag);
   }
 
@@ -248,30 +251,6 @@ class MusicPlayerController extends ChangeNotifier {
       if (songs[i].fileName != _loadedQueueIds[i]) return false;
     }
     return true;
-  }
-
-  /// Legacy loader — kept for any non-playback queue setup.
-  Future<void> loadQueue(List<Song> songs, {int startIndex = 0}) async {
-    if (_player == null) return;
-    _queue = List.of(songs);
-    _currentIndex = startIndex.clamp(0, _queue.length - 1);
-
-    _loadedQueueIds = songs.map((s) => s.fileName).toList();
-    final sources = songs.map(_buildSource).toList();
-
-    _suppressStreams = true;
-    try {
-      await _player!.setAudioSource(
-        ConcatenatingAudioSource(children: sources),
-        initialIndex: _currentIndex,
-        initialPosition: Duration.zero,
-      );
-    } finally {
-      _suppressStreams = false;
-    }
-
-    _emitAudioInfo();
-    notifyListeners();
   }
 
   // ── Transport controls ──
@@ -313,19 +292,30 @@ class MusicPlayerController extends ChangeNotifier {
     if (_queue.isEmpty || _player == null) return;
     final newIndex =
         (_currentIndex - 1 < 0) ? _queue.length - 1 : _currentIndex - 1;
-    await _player!.seek(Duration.zero, index: newIndex);
     _currentIndex = newIndex;
-    _emitAudioInfo();
+    _updateMediaItem();
     notifyListeners();
+    // Suppress so currentIndexStream doesn't double-notify for the same index.
+    _suppressStreams = true;
+    try {
+      await _player!.seek(Duration.zero, index: newIndex);
+    } finally {
+      _suppressStreams = false;
+    }
   }
 
   Future<void> skipNext() async {
     if (_queue.isEmpty || _player == null) return;
     final newIndex = (_currentIndex + 1) % _queue.length;
-    await _player!.seek(Duration.zero, index: newIndex);
     _currentIndex = newIndex;
-    _emitAudioInfo();
+    _updateMediaItem();
     notifyListeners();
+    _suppressStreams = true;
+    try {
+      await _player!.seek(Duration.zero, index: newIndex);
+    } finally {
+      _suppressStreams = false;
+    }
   }
 
   Future<void> toggleShuffle() async {
@@ -349,26 +339,42 @@ class MusicPlayerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── Audio info stream ──
+  // ── Lock-screen / notification metadata ──
 
-  void _emitAudioInfo() {
+  void _updateMediaItem() {
     final song = currentSong;
-    if (song == null) return;
-    _audioInfoController.add(AudioInfo(
-      frequencyKHz: song.sampleRateHz / 1000.0,
-      bitDepth: song.bitDepth,
-      isLossless: song.isLossless,
-      isHiRes: song.isHiRes,
-    ));
+    if (song == null || _handler == null) return;
 
-    // Update the media item for lock-screen / notification display.
-    _handler?.mediaItem.add(MediaItem(
+    // Prefer the real duration from the player (resolved after
+    // setAudioSource) over the Song model's duration which may
+    // still be Duration.zero for freshly imported files.
+    final effectiveDuration =
+        _duration > Duration.zero ? _duration : song.duration;
+
+    _handler!.mediaItem.add(MediaItem(
       id: song.fileName,
       title: song.title,
       artist: song.artist,
       album: song.album,
-      duration: song.duration,
+      duration: effectiveDuration,
     ));
+  }
+
+  /// Push the full queue to audio_service so lock-screen skip
+  /// controls know there are adjacent tracks.
+  void _updateQueue() {
+    if (_handler == null || _queue.isEmpty) return;
+    _handler!.queue.add(
+      _queue
+          .map((s) => MediaItem(
+                id: s.fileName,
+                title: s.title,
+                artist: s.artist,
+                album: s.album,
+                duration: s.duration,
+              ))
+          .toList(),
+    );
   }
 
   // ── Cleanup ──
@@ -378,32 +384,8 @@ class MusicPlayerController extends ChangeNotifier {
     for (final sub in _subs) {
       sub.cancel();
     }
-    _audioInfoController.close();
     _player?.dispose();
     super.dispose();
-  }
-}
-
-/// Value object emitted on [MusicPlayerController.audioInfoStream].
-class AudioInfo {
-  final double frequencyKHz;
-  final int bitDepth;
-  final bool isLossless;
-  final bool isHiRes;
-
-  const AudioInfo({
-    required this.frequencyKHz,
-    required this.bitDepth,
-    required this.isLossless,
-    required this.isHiRes,
-  });
-
-  /// e.g. "96 kHz/24-bit"
-  String get label {
-    final freqStr = frequencyKHz == frequencyKHz.roundToDouble()
-        ? '${frequencyKHz.round()}'
-        : frequencyKHz.toStringAsFixed(1);
-    return '$freqStr kHz/$bitDepth-bit';
   }
 }
 

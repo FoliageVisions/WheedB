@@ -98,10 +98,10 @@ class AudioMetadataParser {
 
     // Total samples: 4 bits from byte 21 + bytes 22-25.
     final totalSamples = ((b[21] & 0x0F) * 4294967296) + // << 32
-        (b[22] << 24) |
+        ((b[22] << 24) |
         (b[23] << 16) |
         (b[24] << 8) |
-        b[25];
+        b[25]);
 
     Duration? dur;
     if (sampleRate > 0 && totalSamples > 0) {

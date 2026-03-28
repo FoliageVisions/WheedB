@@ -2,9 +2,15 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import '../controllers/music_player_controller.dart';
 import '../models/playlist.dart';
 import '../models/song.dart';
+import '../widgets/song_tile.dart';
+import 'playlist_detail_page.dart';
 import 'playlists_screen.dart';
+
+/// Actions available on each album card's three-dots menu.
+enum AlbumCardAction { rename, addPicture, delete }
 
 /// The Library page that replaces the old standalone Playlists tab.
 /// A [TabBar] at the top toggles between **Playlists** and **Albums**,
@@ -13,18 +19,36 @@ class LibraryPage extends StatefulWidget {
   final List<Song> library;
   final List<Playlist> manualPlaylists;
   final void Function(List<Song> queue, int index)? onSongTap;
+  final void Function(Song song)? onFavoriteToggle;
+  final void Function(Song song, SongTileAction action)? onMenuAction;
+  final void Function(Playlist playlist, Song song)? onRemoveFromPlaylist;
+  final void Function(Playlist playlist, Song song)? onRemoveFromAlbum;
+  final Song? nowPlaying;
+  final MusicPlayerController? controller;
   final Map<String, String> albumCoverArtPaths;
+  final Set<String> manualAlbumNames;
   final ValueChanged<int>? onTabChanged;
   final void Function(int oldIndex, int newIndex)? onPlaylistReorder;
+  final void Function(String albumName, AlbumCardAction action)? onAlbumCardAction;
+  final void Function(String playlistName, PlaylistCardAction action)? onPlaylistCardAction;
 
   const LibraryPage({
     super.key,
     required this.library,
     this.manualPlaylists = const [],
     this.onSongTap,
+    this.onFavoriteToggle,
+    this.onMenuAction,
+    this.onRemoveFromPlaylist,
+    this.onRemoveFromAlbum,
+    this.nowPlaying,
+    this.controller,
     this.albumCoverArtPaths = const {},
+    this.manualAlbumNames = const {},
     this.onTabChanged,
     this.onPlaylistReorder,
+    this.onAlbumCardAction,
+    this.onPlaylistCardAction,
   });
 
   @override
@@ -131,11 +155,24 @@ class _LibraryPageState extends State<LibraryPage>
                 manualPlaylists: widget.manualPlaylists,
                 onSongTap: widget.onSongTap,
                 onPlaylistReorder: widget.onPlaylistReorder,
+                onFavoriteToggle: widget.onFavoriteToggle,
+                onMenuAction: widget.onMenuAction,
+                onRemoveFromPlaylist: widget.onRemoveFromPlaylist,
+                nowPlaying: widget.nowPlaying,
+                controller: widget.controller,
+                onPlaylistCardAction: widget.onPlaylistCardAction,
               ),
               _AlbumsGrid(
                 library: widget.library,
+                manualAlbumNames: widget.manualAlbumNames,
                 onSongTap: widget.onSongTap,
+                onFavoriteToggle: widget.onFavoriteToggle,
+                onMenuAction: widget.onMenuAction,
+                nowPlaying: widget.nowPlaying,
+                controller: widget.controller,
+                onRemoveFromAlbum: widget.onRemoveFromAlbum,
                 coverArtPaths: widget.albumCoverArtPaths,
+                onAlbumCardAction: widget.onAlbumCardAction,
               ),
             ],
           ),
@@ -179,22 +216,42 @@ class _LibraryPageState extends State<LibraryPage>
 
 class _AlbumsGrid extends StatelessWidget {
   final List<Song> library;
+  final Set<String> manualAlbumNames;
   final void Function(List<Song> queue, int index)? onSongTap;
+  final void Function(Song song)? onFavoriteToggle;
+  final void Function(Song song, SongTileAction action)? onMenuAction;
+  final Song? nowPlaying;
+  final MusicPlayerController? controller;
+  final void Function(Playlist playlist, Song song)? onRemoveFromAlbum;
   final Map<String, String> coverArtPaths;
+  final void Function(String albumName, AlbumCardAction action)? onAlbumCardAction;
   const _AlbumsGrid({
     required this.library,
+    this.manualAlbumNames = const {},
     this.onSongTap,
+    this.onFavoriteToggle,
+    this.onMenuAction,
+    this.nowPlaying,
+    this.controller,
+    this.onRemoveFromAlbum,
     this.coverArtPaths = const {},
+    this.onAlbumCardAction,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    // Group songs by album name.
+    // Group songs by album name, but only for user-created albums.
     final albumMap = <String, List<Song>>{};
     for (final song in library) {
-      albumMap.putIfAbsent(song.album, () => []).add(song);
+      if (manualAlbumNames.contains(song.album)) {
+        albumMap.putIfAbsent(song.album, () => []).add(song);
+      }
+    }
+    // Also include empty albums (created but no songs assigned yet).
+    for (final name in manualAlbumNames) {
+      albumMap.putIfAbsent(name, () => []);
     }
     final albums = albumMap.entries.toList()
       ..sort((a, b) => a.key.compareTo(b.key));
@@ -235,7 +292,10 @@ class _AlbumsGrid extends StatelessWidget {
         final entry = albums[index];
         final albumName = entry.key;
         final songs = entry.value;
-        final artist = songs.first.artist;
+        final artist = songs.isNotEmpty ? songs.first.artist : '';
+        final subtitle = songs.isEmpty
+            ? '0 songs'
+            : '$artist · ${songs.length} ${songs.length == 1 ? 'song' : 'songs'}';
 
         return Material(
           color: Colors.white.withValues(alpha: 0.06),
@@ -245,9 +305,25 @@ class _AlbumsGrid extends StatelessWidget {
             splashColor: theme.colorScheme.primary.withValues(alpha: 0.12),
             highlightColor: theme.colorScheme.primary.withValues(alpha: 0.06),
             onTap: () {
-              if (songs.isNotEmpty) {
-                onSongTap?.call(songs, 0);
-              }
+              final albumPlaylist = Playlist(
+                name: albumName,
+                icon: Icons.album_rounded,
+                songs: songs,
+              );
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => PlaylistDetailPage(
+                    playlist: albumPlaylist,
+                    onSongTap: onSongTap,
+                    onFavoriteToggle: onFavoriteToggle,
+                    onMenuAction: onMenuAction,
+                    onRemoveFromPlaylist: onRemoveFromAlbum,
+                    nowPlaying: nowPlaying,
+                    controller: controller,
+                  ),
+                ),
+              );
             },
             child: Padding(
               padding: const EdgeInsets.all(10),
@@ -266,26 +342,97 @@ class _AlbumsGrid extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  Text(
-                    albumName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: Colors.white.withValues(alpha: 0.92),
-                      fontWeight: FontWeight.w700,
-                      height: 1.2,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    '$artist · ${songs.length} ${songs.length == 1 ? 'song' : 'songs'}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: Colors.white.withValues(alpha: 0.4),
-                      fontWeight: FontWeight.w500,
-                      fontSize: 11.5,
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              albumName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: Colors.white.withValues(alpha: 0.92),
+                                fontWeight: FontWeight.w700,
+                                height: 1.2,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              subtitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: Colors.white.withValues(alpha: 0.4),
+                                fontWeight: FontWeight.w500,
+                                fontSize: 11.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(
+                        width: 28,
+                        height: 28,
+                        child: PopupMenuButton<AlbumCardAction>(
+                          padding: EdgeInsets.zero,
+                          iconSize: 18,
+                          icon: Icon(
+                            Icons.more_vert_rounded,
+                            size: 18,
+                            color: Colors.white.withValues(alpha: 0.45),
+                          ),
+                          color: const Color(0xFF1E1E1E),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          offset: const Offset(0, 32),
+                          onSelected: (action) =>
+                              onAlbumCardAction?.call(albumName, action),
+                          itemBuilder: (_) => [
+                            PopupMenuItem(
+                              value: AlbumCardAction.rename,
+                              child: Row(
+                                children: [
+                                  Icon(Icons.edit_rounded,
+                                      size: 20,
+                                      color: theme.colorScheme.primary),
+                                  const SizedBox(width: 12),
+                                  const Text('Rename Album',
+                                      style: TextStyle(color: Colors.white)),
+                                ],
+                              ),
+                            ),
+                            PopupMenuItem(
+                              value: AlbumCardAction.addPicture,
+                              child: Row(
+                                children: [
+                                  Icon(Icons.image_rounded,
+                                      size: 20,
+                                      color: theme.colorScheme.secondary),
+                                  const SizedBox(width: 12),
+                                  const Text('Add Album Picture',
+                                      style: TextStyle(color: Colors.white)),
+                                ],
+                              ),
+                            ),
+                            PopupMenuItem(
+                              value: AlbumCardAction.delete,
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.delete_rounded,
+                                      size: 20, color: Colors.redAccent),
+                                  const SizedBox(width: 12),
+                                  const Text('Delete Album',
+                                      style: TextStyle(color: Colors.white)),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),

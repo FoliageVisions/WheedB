@@ -43,7 +43,7 @@ class DeviceMusicScanner {
 
     // Parse real sample rate & bit depth from file header when possible.
     final data = s.data;
-    if (data != null && data.isNotEmpty) {
+    if (data.isNotEmpty) {
       try {
         final file = File(data);
         if (file.existsSync()) {

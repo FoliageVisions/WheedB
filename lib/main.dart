@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, Tar
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:file_picker/file_picker.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -15,6 +16,7 @@ import 'models/audio_settings.dart';
 import 'models/playlist.dart';
 import 'models/song.dart';
 import 'screens/library_page.dart';
+import 'screens/playlists_screen.dart';
 import 'screens/songs_screen.dart';
 import 'services/audio_metadata.dart';
 import 'services/audio_prober.dart';
@@ -24,6 +26,15 @@ import 'services/device_music_scanner.dart';
 import 'services/web_library_cache.dart';
 import 'widgets/options_menu_sheet.dart';
 import 'widgets/playback_bar.dart';
+import 'widgets/song_tile.dart';
+
+/// Global notifier for the app font family.
+/// Empty string means system default; otherwise a Google Fonts family name.
+final ValueNotifier<String> appFontNotifier = ValueNotifier<String>('');
+
+/// Human-readable name for display.
+String get appFontDisplayName =>
+    appFontNotifier.value.isEmpty ? 'System Default' : appFontNotifier.value;
 
 void main() {
   runApp(const WheedBApp());
@@ -34,26 +45,37 @@ class WheedBApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'WheedB',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurple,
+    return ValueListenableBuilder<String>(
+      valueListenable: appFontNotifier,
+      builder: (context, fontFamily, _) {
+        final baseTheme = ThemeData(
           brightness: Brightness.dark,
-        ),
-        scaffoldBackgroundColor: const Color(0xFF121212),
-        useMaterial3: true,
-      ),
-      home: const HomePage(),
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: Colors.deepPurple,
+            brightness: Brightness.dark,
+          ),
+          scaffoldBackgroundColor: const Color(0xFF121212),
+          useMaterial3: true,
+        );
+
+        final themed = fontFamily.isEmpty
+            ? baseTheme
+            : baseTheme.copyWith(
+                textTheme: GoogleFonts.getTextTheme(fontFamily, baseTheme.textTheme),
+              );
+
+        return MaterialApp(
+          title: 'WheedB',
+          debugShowCheckedModeBanner: false,
+          theme: themed,
+          home: const HomePage(),
+        );
+      },
     );
   }
 }
 
 /// Actions available from the Library three-dots menu.
-enum _LibraryAction { rename, addPicture, delete }
-
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -69,6 +91,8 @@ class _HomePageState extends State<HomePage> {
   final _scanner = DeviceMusicScanner();
   List<Song> _deviceSongs = [];
   List<Playlist> _manualPlaylists = [];
+  Set<String> _manualAlbumNames = {};
+  Map<String, String> _albumCoverArtPaths = {};
   bool _loading = true;
 
   @override
@@ -84,12 +108,11 @@ class _HomePageState extends State<HomePage> {
       final granted = await _scanner.requestPermission();
       if (granted) {
         final songs = await _scanner.scanAllSongs();
-        final playlists = await DatabaseHelper.instance.loadPlaylists();
         setState(() {
           _deviceSongs = songs;
-          _manualPlaylists = playlists;
           _loading = false;
         });
+        await _refreshPlaylists();
         return;
       }
 
@@ -131,6 +154,244 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  void _toggleFavorite(Song song) {
+    final idx = _deviceSongs.indexWhere((s) => s.fileName == song.fileName);
+    if (idx == -1) return;
+    setState(() {
+      _deviceSongs[idx] = song.copyWith(isFavorite: !song.isFavorite);
+    });
+    if (kIsWeb) {
+      WebLibraryCache.instance.saveSongs(_deviceSongs);
+    }
+  }
+
+  Future<void> _handleSongMenuAction(Song song, SongTileAction action) async {
+    switch (action) {
+      case SongTileAction.addToPlaylist:
+        await _showAddToPlaylistSheet(song);
+      case SongTileAction.addToAlbum:
+        await _showAddToAlbumSheet(song);
+      case SongTileAction.removeFromPlaylist:
+        // Handled by _handleRemoveFromPlaylist via dedicated callback.
+        break;
+    }
+  }
+
+  Future<void> _handleRemoveFromPlaylist(Playlist playlist, Song song) async {
+    if (playlist.id == null) return;
+    await DatabaseHelper.instance.removeSongFromPlaylist(
+      playlist.id!,
+      song.fileName,
+    );
+    await _refreshPlaylists();
+  }
+
+  void _handleRemoveFromAlbum(Playlist albumPlaylist, Song song) {
+    // Reset the song's album field so it no longer belongs to this album.
+    final idx = _deviceSongs.indexWhere((s) => s.fileName == song.fileName);
+    if (idx == -1) return;
+    // Set album to empty string to remove from user-created album.
+    setState(() {
+      _deviceSongs[idx] = _deviceSongs[idx].copyWith(album: '');
+    });
+    if (kIsWeb) {
+      WebLibraryCache.instance.saveSongs(_deviceSongs);
+    }
+  }
+
+  Future<void> _showAddToPlaylistSheet(Song song) async {
+    final theme = Theme.of(context);
+    final playlists = _manualPlaylists.where((p) => p.id != null).toList();
+
+    final result = await showModalBottomSheet<dynamic>(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 12),
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Add to Playlist',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 12),
+              // New Playlist option
+              ListTile(
+                leading: Icon(Icons.add_rounded,
+                    color: theme.colorScheme.primary),
+                title: Text('New Playlist',
+                    style: TextStyle(color: theme.colorScheme.onSurface)),
+                onTap: () => Navigator.pop(ctx, 'new'),
+              ),
+              if (playlists.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 24),
+                  child: Text(
+                    'No playlists yet',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                )
+              else
+                ...playlists.map((pl) => ListTile(
+                      leading: Icon(Icons.playlist_play_rounded,
+                          color: theme.colorScheme.primary),
+                      title: Text(pl.name,
+                          style:
+                              TextStyle(color: theme.colorScheme.onSurface)),
+                      subtitle: Text('${pl.songs.length} songs',
+                          style: TextStyle(
+                              color: theme.colorScheme.onSurfaceVariant)),
+                      onTap: () => Navigator.pop(ctx, pl),
+                    )),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (result == null) return;
+
+    if (result == 'new') {
+      // Create a new playlist then add the song
+      await _showCreateEntryDialog(isPlaylist: true);
+      // After creation, find the newest playlist and add the song
+      final refreshed = await DatabaseHelper.instance.loadPlaylists();
+      if (refreshed.isNotEmpty && refreshed.first.id != null) {
+        await DatabaseHelper.instance
+            .addSongsToPlaylist(refreshed.first.id!, [song]);
+        await _refreshPlaylists();
+      }
+    } else if (result is Playlist && result.id != null) {
+      await DatabaseHelper.instance
+          .addSongsToPlaylist(result.id!, [song]);
+      await _refreshPlaylists();
+    }
+  }
+
+  Future<void> _showAddToAlbumSheet(Song song) async {
+    final theme = Theme.of(context);
+    final albumRows = await DatabaseHelper.instance.loadAlbums();
+
+    if (!mounted) return;
+
+    final result = await showModalBottomSheet<dynamic>(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 12),
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Add to Album',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                leading: Icon(Icons.add_rounded,
+                    color: theme.colorScheme.tertiary),
+                title: Text('New Album',
+                    style: TextStyle(color: theme.colorScheme.onSurface)),
+                onTap: () => Navigator.pop(ctx, 'new'),
+              ),
+              if (albumRows.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 24),
+                  child: Text(
+                    'No albums yet',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                )
+              else
+                ...albumRows.map((row) => ListTile(
+                      leading: Icon(Icons.album_rounded,
+                          color: theme.colorScheme.tertiary),
+                      title: Text(row['name'] as String,
+                          style:
+                              TextStyle(color: theme.colorScheme.onSurface)),
+                      onTap: () => Navigator.pop(ctx, row),
+                    )),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (result == null) return;
+
+    if (result == 'new') {
+      await _showCreateEntryDialog(isPlaylist: false);
+      await _refreshPlaylists(); // also refreshes _manualAlbumNames
+      // After creating a new album, find it and add the song to it.
+      if (_manualAlbumNames.isNotEmpty) {
+        final albumRows = await DatabaseHelper.instance.loadAlbums();
+        if (albumRows.isNotEmpty) {
+          final newestAlbumName = albumRows.first['name'] as String;
+          final idx = _deviceSongs.indexWhere((s) => s.fileName == song.fileName);
+          if (idx != -1) {
+            setState(() {
+              _deviceSongs[idx] = _deviceSongs[idx].copyWith(album: newestAlbumName);
+            });
+            if (kIsWeb) {
+              WebLibraryCache.instance.saveSongs(_deviceSongs);
+            }
+          }
+        }
+      }
+    } else if (result is Map<String, dynamic>) {
+      // Update the song's album field to match the selected album name
+      final albumName = result['name'] as String;
+      final idx = _deviceSongs.indexWhere((s) => s.fileName == song.fileName);
+      if (idx != -1) {
+        setState(() {
+          _deviceSongs[idx] = _deviceSongs[idx].copyWith(album: albumName);
+        });
+        if (kIsWeb) {
+          WebLibraryCache.instance.saveSongs(_deviceSongs);
+        }
+      }
+    }
+  }
+
   void _onPlaylistReorder(int oldIndex, int newIndex) {
     setState(() {
       if (newIndex > oldIndex) newIndex--;
@@ -146,7 +407,42 @@ class _HomePageState extends State<HomePage> {
   Future<void> _refreshPlaylists() async {
     if (kIsWeb) return;
     final playlists = await DatabaseHelper.instance.loadPlaylists();
-    setState(() => _manualPlaylists = playlists);
+    // Resolve bare DB song records against the full library so playlist
+    // songs carry duration, isFavorite, sampleRate, bitDepth, etc.
+    final byFileName = <String, Song>{};
+    for (final s in _deviceSongs) {
+      byFileName[s.fileName] = s;
+    }
+    final enriched = playlists.map((pl) {
+      final resolved = pl.songs.map((s) => byFileName[s.fileName] ?? s).toList();
+      return Playlist(
+        id: pl.id,
+        name: pl.name,
+        icon: pl.icon,
+        songs: resolved,
+        isSmart: pl.isSmart,
+        coverArtPath: pl.coverArtPath,
+        isManualCover: pl.isManualCover,
+      );
+    }).toList();
+    setState(() => _manualPlaylists = enriched);
+
+    // Also refresh user-created album names and cover art paths.
+    final albumRows = await DatabaseHelper.instance.loadAlbums();
+    final names = <String>{};
+    final coverPaths = <String, String>{};
+    for (final a in albumRows) {
+      final name = a['name'] as String;
+      names.add(name);
+      final cover = a['cover_art_path'] as String?;
+      if (cover != null && cover.isNotEmpty) {
+        coverPaths[name] = cover;
+      }
+    }
+    setState(() {
+      _manualAlbumNames = names;
+      _albumCoverArtPaths = coverPaths;
+    });
   }
 
   // ── Create entry dialog (reusable for Playlist / Album) ──────────
@@ -661,114 +957,57 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  // ── Library three-dots action handlers ───────────────────────────
+  // ── Per-playlist card action handler ─────────────────────────────
 
-  void _handleLibraryAction(_LibraryAction action) {
-    final isPlaylist = _libraryTabIndex == 0;
+  Future<void> _handlePlaylistCardAction(
+      String playlistName, PlaylistCardAction action) async {
+    // Look up the playlist id from the in-memory list.
+    final pl = _manualPlaylists.cast<Playlist?>().firstWhere(
+          (p) => p!.name == playlistName,
+          orElse: () => null,
+        );
+    if (pl == null || pl.id == null) return;
+    final item = (id: pl.id!, name: playlistName);
+
     switch (action) {
-      case _LibraryAction.rename:
-        _showRenameDialog(isPlaylist: isPlaylist);
-      case _LibraryAction.addPicture:
-        _showAddPictureFlow(isPlaylist: isPlaylist);
-      case _LibraryAction.delete:
-        _showDeleteDialog(isPlaylist: isPlaylist);
+      case PlaylistCardAction.rename:
+        await _showRenameForItem(item: item, isPlaylist: true);
+      case PlaylistCardAction.addPicture:
+        await _showAddPictureForItem(item: item, isPlaylist: true);
+      case PlaylistCardAction.delete:
+        await _showDeleteForItem(item: item, isPlaylist: true);
     }
   }
 
-  /// Shows a picker bottom sheet and returns the selected item, or null.
-  Future<({int id, String name})?> _pickItem({
-    required bool isPlaylist,
-  }) async {
-    final type = isPlaylist ? 'playlist' : 'album';
-    List<({int id, String name})> items;
+  // ── Per-album card action handler ────────────────────────────────
 
-    if (isPlaylist) {
-      items = _manualPlaylists
-          .where((p) => p.id != null)
-          .map((p) => (id: p.id!, name: p.name))
-          .toList();
-    } else {
-      final albums = await DatabaseHelper.instance.loadAlbums();
-      items = albums
-          .map((a) => (id: a['id'] as int, name: a['name'] as String))
-          .toList();
-    }
-
-    if (items.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('No ${type}s to manage'),
-            behavior: SnackBarBehavior.floating,
-          ),
+  Future<void> _handleAlbumCardAction(
+      String albumName, AlbumCardAction action) async {
+    // Look up the album id from the DB.
+    final albums = await DatabaseHelper.instance.loadAlbums();
+    final row = albums.cast<Map<String, dynamic>?>().firstWhere(
+          (a) => a!['name'] as String == albumName,
+          orElse: () => null,
         );
-      }
-      return null;
+    if (row == null) return;
+    final item = (id: row['id'] as int, name: albumName);
+
+    switch (action) {
+      case AlbumCardAction.rename:
+        await _showRenameForItem(item: item, isPlaylist: false);
+      case AlbumCardAction.addPicture:
+        await _showAddPictureForItem(item: item, isPlaylist: false);
+      case AlbumCardAction.delete:
+        await _showDeleteForItem(item: item, isPlaylist: false);
     }
-
-    // Skip picker if there's only one item.
-    if (items.length == 1) return items.first;
-
-    if (!mounted) return null;
-    return showModalBottomSheet<({int id, String name})>(
-      context: context,
-      backgroundColor: const Color(0xFF1E1E1E),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 12),
-              Container(
-                width: 36,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text(
-                  'Select ${type[0].toUpperCase()}${type.substring(1)}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-              for (final item in items)
-                ListTile(
-                  leading: Icon(
-                    isPlaylist
-                        ? Icons.queue_music_rounded
-                        : Icons.album_rounded,
-                    color: Colors.white.withValues(alpha: 0.5),
-                  ),
-                  title: Text(
-                    item.name,
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                  onTap: () => Navigator.pop(ctx, item),
-                ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
-    );
   }
 
   // ── Rename ───────────────────────────────────────────────────────
 
-  Future<void> _showRenameDialog({required bool isPlaylist}) async {
-    final item = await _pickItem(isPlaylist: isPlaylist);
-    if (item == null) return;
-
+  Future<void> _showRenameForItem({
+    required ({int id, String name}) item,
+    required bool isPlaylist,
+  }) async {
     final controller = TextEditingController(text: item.name);
     final type = isPlaylist ? 'Playlist' : 'Album';
     final accent = isPlaylist
@@ -887,9 +1126,10 @@ class _HomePageState extends State<HomePage> {
 
   // ── Add Picture ──────────────────────────────────────────────────
 
-  Future<void> _showAddPictureFlow({required bool isPlaylist}) async {
-    final item = await _pickItem(isPlaylist: isPlaylist);
-    if (item == null) return;
+  Future<void> _showAddPictureForItem({
+    required ({int id, String name}) item,
+    required bool isPlaylist,
+  }) async {
 
     final picker = ImagePicker();
     final image = await picker.pickImage(
@@ -938,10 +1178,10 @@ class _HomePageState extends State<HomePage> {
 
   // ── Delete ───────────────────────────────────────────────────────
 
-  Future<void> _showDeleteDialog({required bool isPlaylist}) async {
-    final item = await _pickItem(isPlaylist: isPlaylist);
-    if (item == null) return;
-
+  Future<void> _showDeleteForItem({
+    required ({int id, String name}) item,
+    required bool isPlaylist,
+  }) async {
     final type = isPlaylist ? 'Playlist' : 'Album';
 
     if (!mounted) return;
@@ -1030,31 +1270,12 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       appBar: AppBar(
         leading: _currentTab == 1
-            ? PopupMenuButton<bool>(
+            ? IconButton(
                 icon: const Icon(Icons.add_rounded),
-                tooltip: 'Create new',
-                color: const Color(0xFF1E1E1E),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                offset: const Offset(8, 48),
-                onSelected: (isPlaylist) {
-                  _showCreateEntryDialog(isPlaylist: isPlaylist);
+                tooltip: _libraryTabIndex == 0 ? 'Create Playlist' : 'Create Album',
+                onPressed: () {
+                  _showCreateEntryDialog(isPlaylist: _libraryTabIndex == 0);
                 },
-                itemBuilder: (context) => [
-                  _buildPopupItem(
-                    icon: Icons.queue_music_rounded,
-                    label: 'Create Playlist',
-                    color: theme.colorScheme.primary,
-                    value: true,
-                  ),
-                  _buildPopupItem(
-                    icon: Icons.album_rounded,
-                    label: 'Create Album',
-                    color: theme.colorScheme.tertiary,
-                    value: false,
-                  ),
-                ],
               )
             : IconButton(
                 icon: const Icon(Icons.add_rounded),
@@ -1074,41 +1295,6 @@ class _HomePageState extends State<HomePage> {
               icon: const Icon(Icons.more_vert_rounded),
               tooltip: 'Options',
               onPressed: () => OptionsMenuSheet.show(context, _audioSettings),
-            )
-          else
-            PopupMenuButton<_LibraryAction>(
-              icon: const Icon(Icons.more_vert_rounded),
-              tooltip: 'Actions',
-              color: const Color(0xFF1E1E1E),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              offset: const Offset(-8, 48),
-              onSelected: _handleLibraryAction,
-              itemBuilder: (_) {
-                final label =
-                    _libraryTabIndex == 0 ? 'Playlist' : 'Album';
-                return [
-                  _buildPopupItem<_LibraryAction>(
-                    icon: Icons.edit_rounded,
-                    label: 'Rename $label',
-                    color: theme.colorScheme.primary,
-                    value: _LibraryAction.rename,
-                  ),
-                  _buildPopupItem<_LibraryAction>(
-                    icon: Icons.image_rounded,
-                    label: 'Add $label Picture',
-                    color: theme.colorScheme.secondary,
-                    value: _LibraryAction.addPicture,
-                  ),
-                  _buildPopupItem<_LibraryAction>(
-                    icon: Icons.delete_rounded,
-                    label: 'Delete $label',
-                    color: Colors.redAccent,
-                    value: _LibraryAction.delete,
-                  ),
-                ];
-              },
             ),
         ],
       ),
@@ -1117,28 +1303,47 @@ class _HomePageState extends State<HomePage> {
           : Column(
               children: [
                 Expanded(
-                  child: IndexedStack(
-                    // Tab 0 = Music, Tab 2 = Library (1 is the create overlay).
-                    index: _currentTab == 1 ? 1 : 0,
-                    children: [
-                      SongsScreen(
-                        songs: _deviceSongs,
-                        onSongTap: _playSong,
-                        onReorder: _onSongReorder,
-                      ),
-                      LibraryPage(
-                        library: _deviceSongs,
-                        manualPlaylists: _manualPlaylists,
-                        onSongTap: _playSong,
-                        onTabChanged: (i) =>
-                            setState(() => _libraryTabIndex = i),
-                        onPlaylistReorder: _onPlaylistReorder,
-                      ),
-                    ],
+                  child: ListenableBuilder(
+                    listenable: _playback,
+                    builder: (context, _) {
+                      final nowPlaying = _playback.currentSong;
+                      return IndexedStack(
+                        // Tab 0 = Music, Tab 2 = Library (1 is the create overlay).
+                        index: _currentTab == 1 ? 1 : 0,
+                        children: [
+                          SongsScreen(
+                            songs: _deviceSongs,
+                            onSongTap: _playSong,
+                            onReorder: _onSongReorder,
+                            onFavoriteToggle: _toggleFavorite,
+                            onMenuAction: _handleSongMenuAction,
+                            nowPlaying: nowPlaying,
+                          ),
+                          LibraryPage(
+                            library: _deviceSongs,
+                            manualPlaylists: _manualPlaylists,
+                            manualAlbumNames: _manualAlbumNames,
+                            albumCoverArtPaths: _albumCoverArtPaths,
+                            onSongTap: _playSong,
+                            onFavoriteToggle: _toggleFavorite,
+                            onMenuAction: _handleSongMenuAction,
+                            onRemoveFromPlaylist: _handleRemoveFromPlaylist,
+                            onRemoveFromAlbum: _handleRemoveFromAlbum,
+                            nowPlaying: nowPlaying,
+                            controller: _playback,
+                            onTabChanged: (i) =>
+                                setState(() => _libraryTabIndex = i),
+                            onPlaylistReorder: _onPlaylistReorder,
+                            onAlbumCardAction: _handleAlbumCardAction,
+                            onPlaylistCardAction: _handlePlaylistCardAction,
+                          ),
+                        ],
+                      );
+                    },
                   ),
                 ),
                 RepaintBoundary(
-                  child: PlaybackBar(controller: _playback),
+                  child: PlaybackBar(controller: _playback, onSongMenuAction: _handleSongMenuAction, onFavoriteToggle: _toggleFavorite),
                 ),
               ],
             ),
@@ -1157,39 +1362,6 @@ class _HomePageState extends State<HomePage> {
             icon: Icon(Icons.library_music_outlined),
             selectedIcon: Icon(Icons.library_music_rounded),
             label: 'Library',
-          ),
-        ],
-      ),
-    );
-  }
-
-  PopupMenuEntry<T> _buildPopupItem<T>({
-    required IconData icon,
-    required String label,
-    required Color color,
-    required T value,
-  }) {
-    return PopupMenuItem<T>(
-      value: value,
-      child: Row(
-        children: [
-          Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(9),
-            ),
-            child: Icon(icon, color: color, size: 19),
-          ),
-          const SizedBox(width: 12),
-          Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w600,
-              fontSize: 14.5,
-            ),
           ),
         ],
       ),

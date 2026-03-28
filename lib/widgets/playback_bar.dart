@@ -1,14 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import '../controllers/music_player_controller.dart';
+import '../models/playlist.dart';
 import '../models/song.dart';
 import '../screens/now_playing_page.dart';
+import 'song_tile.dart';
 
 /// Persistent playback control bar displayed at the bottom of the screen.
 class PlaybackBar extends StatelessWidget {
   final MusicPlayerController controller;
+  final void Function(Song song, SongTileAction action)? onSongMenuAction;
+  final Playlist? currentPlaylist;
+  final void Function(Playlist playlist, Song song)? onRemoveFromPlaylist;
+  final void Function(Song song)? onFavoriteToggle;
 
-  const PlaybackBar({super.key, required this.controller});
+  const PlaybackBar({super.key, required this.controller, this.onSongMenuAction, this.currentPlaylist, this.onRemoveFromPlaylist, this.onFavoriteToggle});
 
   static String _fmt(Duration d) {
     final m = d.inMinutes;
@@ -121,9 +127,15 @@ class PlaybackBar extends StatelessWidget {
                           onTap: () {
                             Navigator.of(context).push(
                               PageRouteBuilder(
-                                pageBuilder: (_, __, ___) =>
-                                    NowPlayingPage(controller: controller),
-                                transitionsBuilder: (_, anim, __, child) {
+                                pageBuilder: (_, _, _) =>
+                                    NowPlayingPage(
+                                      controller: controller,
+                                      onMenuAction: onSongMenuAction,
+                                      currentPlaylist: currentPlaylist,
+                                      onRemoveFromPlaylist: onRemoveFromPlaylist,
+                                      onFavoriteToggle: onFavoriteToggle,
+                                    ),
+                                transitionsBuilder: (_, anim, _, child) {
                                   return SlideTransition(
                                     position: Tween<Offset>(
                                       begin: const Offset(0, 1),

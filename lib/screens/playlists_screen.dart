@@ -3,15 +3,27 @@ import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import '../controllers/music_player_controller.dart';
 import '../models/playlist.dart';
 import '../models/smart_playlist_generator.dart';
 import '../models/song.dart';
+import '../widgets/song_tile.dart';
+import 'playlist_detail_page.dart';
+
+/// Actions available on each manual playlist tile's three-dots menu.
+enum PlaylistCardAction { rename, addPicture, delete }
 
 class PlaylistsScreen extends StatelessWidget {
   final List<Song> library;
   final List<Playlist> manualPlaylists;
   final void Function(List<Song> queue, int index)? onSongTap;
   final void Function(int oldIndex, int newIndex)? onPlaylistReorder;
+  final void Function(Song song)? onFavoriteToggle;
+  final void Function(Song song, SongTileAction action)? onMenuAction;
+  final void Function(Playlist playlist, Song song)? onRemoveFromPlaylist;
+  final Song? nowPlaying;
+  final MusicPlayerController? controller;
+  final void Function(String playlistName, PlaylistCardAction action)? onPlaylistCardAction;
 
   const PlaylistsScreen({
     super.key,
@@ -19,6 +31,12 @@ class PlaylistsScreen extends StatelessWidget {
     this.manualPlaylists = const [],
     this.onSongTap,
     this.onPlaylistReorder,
+    this.onFavoriteToggle,
+    this.onMenuAction,
+    this.onRemoveFromPlaylist,
+    this.nowPlaying,
+    this.controller,
+    this.onPlaylistCardAction,
   });
 
   @override
@@ -56,6 +74,11 @@ class PlaylistsScreen extends StatelessWidget {
               (context, index) => _SmartPlaylistCard(
                 playlist: smartPlaylists[index],
                 onSongTap: onSongTap,
+                onFavoriteToggle: onFavoriteToggle,
+                onMenuAction: onMenuAction,
+                onRemoveFromPlaylist: onRemoveFromPlaylist,
+                nowPlaying: nowPlaying,
+                controller: controller,
               ),
               childCount: smartPlaylists.length,
             ),
@@ -132,6 +155,12 @@ class PlaylistsScreen extends StatelessWidget {
                 child: _ManualPlaylistTile(
                   playlist: pl,
                   onSongTap: onSongTap,
+                  onFavoriteToggle: onFavoriteToggle,
+                  onMenuAction: onMenuAction,
+                  onRemoveFromPlaylist: onRemoveFromPlaylist,
+                  nowPlaying: nowPlaying,
+                  controller: controller,
+                  onPlaylistCardAction: onPlaylistCardAction,
                 ),
               );
             },
@@ -146,7 +175,12 @@ class PlaylistsScreen extends StatelessWidget {
 class _SmartPlaylistCard extends StatelessWidget {
   final Playlist playlist;
   final void Function(List<Song> queue, int index)? onSongTap;
-  const _SmartPlaylistCard({required this.playlist, this.onSongTap});
+  final void Function(Song song)? onFavoriteToggle;
+  final void Function(Song song, SongTileAction action)? onMenuAction;
+  final void Function(Playlist playlist, Song song)? onRemoveFromPlaylist;
+  final Song? nowPlaying;
+  final MusicPlayerController? controller;
+  const _SmartPlaylistCard({required this.playlist, this.onSongTap, this.onFavoriteToggle, this.onMenuAction, this.onRemoveFromPlaylist, this.nowPlaying, this.controller});
 
   @override
   Widget build(BuildContext context) {
@@ -159,9 +193,20 @@ class _SmartPlaylistCard extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
         onTap: () {
-          if (playlist.songs.isNotEmpty) {
-            onSongTap?.call(playlist.songs, 0);
-          }
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => PlaylistDetailPage(
+                playlist: playlist,
+                onSongTap: onSongTap,
+                onFavoriteToggle: onFavoriteToggle,
+                onMenuAction: onMenuAction,
+                onRemoveFromPlaylist: onRemoveFromPlaylist,
+                nowPlaying: nowPlaying,
+                controller: controller,
+              ),
+            ),
+          );
         },
         child: Padding(
           padding: const EdgeInsets.all(14),
@@ -203,7 +248,13 @@ class _SmartPlaylistCard extends StatelessWidget {
 class _ManualPlaylistTile extends StatelessWidget {
   final Playlist playlist;
   final void Function(List<Song> queue, int index)? onSongTap;
-  const _ManualPlaylistTile({required this.playlist, this.onSongTap});
+  final void Function(Song song)? onFavoriteToggle;
+  final void Function(Song song, SongTileAction action)? onMenuAction;
+  final void Function(Playlist playlist, Song song)? onRemoveFromPlaylist;
+  final Song? nowPlaying;
+  final MusicPlayerController? controller;
+  final void Function(String playlistName, PlaylistCardAction action)? onPlaylistCardAction;
+  const _ManualPlaylistTile({required this.playlist, this.onSongTap, this.onFavoriteToggle, this.onMenuAction, this.onRemoveFromPlaylist, this.nowPlaying, this.controller, this.onPlaylistCardAction});
 
   @override
   Widget build(BuildContext context) {
@@ -212,9 +263,20 @@ class _ManualPlaylistTile extends StatelessWidget {
 
     return InkWell(
       onTap: () {
-        if (playlist.songs.isNotEmpty) {
-          onSongTap?.call(playlist.songs, 0);
-        }
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => PlaylistDetailPage(
+              playlist: playlist,
+              onSongTap: onSongTap,
+              onFavoriteToggle: onFavoriteToggle,
+              onMenuAction: onMenuAction,
+              onRemoveFromPlaylist: onRemoveFromPlaylist,
+              nowPlaying: nowPlaying,
+              controller: controller,
+            ),
+          ),
+        );
       },
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -222,10 +284,10 @@ class _ManualPlaylistTile extends StatelessWidget {
           children: [
             // Cover art thumbnail or placeholder
             ClipRRect(
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(10),
               child: SizedBox(
-                width: 48,
-                height: 48,
+                width: 56,
+                height: 56,
                 child: playlist.coverArtPath != null && !kIsWeb
                     ? Image.file(
                         File(playlist.coverArtPath!),
@@ -259,9 +321,65 @@ class _ManualPlaylistTile extends StatelessWidget {
                 ],
               ),
             ),
-            Icon(
-              Icons.chevron_right_rounded,
-              color: theme.colorScheme.onSurfaceVariant,
+            SizedBox(
+              width: 32,
+              height: 32,
+              child: PopupMenuButton<PlaylistCardAction>(
+                padding: EdgeInsets.zero,
+                iconSize: 20,
+                icon: Icon(
+                  Icons.more_vert_rounded,
+                  size: 20,
+                  color: Colors.white.withValues(alpha: 0.45),
+                ),
+                color: const Color(0xFF1E1E1E),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                offset: const Offset(0, 36),
+                onSelected: (action) =>
+                    onPlaylistCardAction?.call(playlist.name, action),
+                itemBuilder: (_) => [
+                  PopupMenuItem(
+                    value: PlaylistCardAction.rename,
+                    child: Row(
+                      children: [
+                        Icon(Icons.edit_rounded,
+                            size: 20,
+                            color: theme.colorScheme.primary),
+                        const SizedBox(width: 12),
+                        const Text('Rename Playlist',
+                            style: TextStyle(color: Colors.white)),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: PlaylistCardAction.addPicture,
+                    child: Row(
+                      children: [
+                        Icon(Icons.image_rounded,
+                            size: 20,
+                            color: theme.colorScheme.secondary),
+                        const SizedBox(width: 12),
+                        const Text('Add Playlist Picture',
+                            style: TextStyle(color: Colors.white)),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: PlaylistCardAction.delete,
+                    child: Row(
+                      children: [
+                        const Icon(Icons.delete_rounded,
+                            size: 20, color: Colors.redAccent),
+                        const SizedBox(width: 12),
+                        const Text('Delete Playlist',
+                            style: TextStyle(color: Colors.white)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -276,7 +394,7 @@ class _ManualPlaylistTile extends StatelessWidget {
       child: Icon(
         playlist.icon,
         color: Colors.white.withValues(alpha: 0.35),
-        size: 24,
+        size: 28,
       ),
     );
   }

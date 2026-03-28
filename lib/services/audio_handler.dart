@@ -6,10 +6,22 @@ import 'package:just_audio/just_audio.dart';
 /// playback and lock-screen / notification controls.
 class WheedBAudioHandler extends BaseAudioHandler with SeekHandler {
   final AudioPlayer _player;
+  StreamSubscription<PlaybackEvent>? _eventSub;
+  StreamSubscription<Duration>? _positionSub;
 
   WheedBAudioHandler(this._player) {
     // Forward player state to audio_service's playbackState stream.
-    _player.playbackEventStream.map(_transformEvent).pipe(playbackState);
+    _eventSub = _player.playbackEventStream.listen((event) {
+      playbackState.add(_transformEvent(event));
+    });
+
+    // Also push position updates so the lock-screen progress bar
+    // stays in sync even between playback events.
+    _positionSub = _player.positionStream.listen((_) {
+      if (_player.playing) {
+        playbackState.add(_transformEvent(_player.playbackEvent));
+      }
+    });
   }
 
   // ── Transport controls (called from notification / lock-screen) ──
@@ -21,7 +33,10 @@ class WheedBAudioHandler extends BaseAudioHandler with SeekHandler {
   Future<void> pause() => _player.pause();
 
   @override
-  Future<void> stop() => _player.stop();
+  Future<void> stop() async {
+    await _player.stop();
+    await super.stop();
+  }
 
   @override
   Future<void> seek(Duration position) => _player.seek(position);
@@ -38,6 +53,16 @@ class WheedBAudioHandler extends BaseAudioHandler with SeekHandler {
     if (_player.hasPrevious) {
       await _player.seekToPrevious();
     }
+  }
+
+  @override
+  Future<void> customAction(String name, [Map<String, dynamic>? extras]) async {
+    if (name == 'dispose') {
+      _eventSub?.cancel();
+      _positionSub?.cancel();
+      await _player.dispose();
+    }
+    await super.customAction(name, extras);
   }
 
   /// Map just_audio's PlaybackEvent into audio_service's PlaybackState.

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../main.dart' show appFontNotifier;
 import '../models/audio_settings.dart';
 import 'equalizer_panel.dart';
 
@@ -150,6 +151,23 @@ class OptionsMenuSheet extends StatelessWidget {
                     category: 'DURATION – LENGTH',
                     description: 'Longest tracks first',
                   ),
+
+                  const SizedBox(height: 8),
+
+                  // ── FONT section ──
+                  _sectionHeader(theme, 'APPEARANCE',
+                      'Change the app typeface'),
+
+                  _fontOption(
+                    theme,
+                    fontName: 'System Default',
+                    fontValue: '',
+                  ),
+                  _fontOption(
+                    theme,
+                    fontName: 'Courier Prime',
+                    fontValue: 'Courier Prime',
+                  ),
                 ],
               );
             },
@@ -293,6 +311,53 @@ class OptionsMenuSheet extends StatelessWidget {
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _fontOption(
+    ThemeData theme, {
+    required String fontName,
+    required String fontValue,
+  }) {
+    final isSelected = appFontNotifier.value == fontValue;
+    return InkWell(
+      onTap: () {
+        appFontNotifier.value = fontValue;
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Icon(
+              isSelected
+                  ? Icons.radio_button_checked_rounded
+                  : Icons.radio_button_off_rounded,
+              size: 22,
+              color: isSelected
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(
+                fontName,
+                style: theme.textTheme.bodyLarge?.copyWith(
+                  color: isSelected
+                      ? theme.colorScheme.onSurface
+                      : theme.colorScheme.onSurfaceVariant,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                ),
+              ),
+            ),
+            if (isSelected)
+              Icon(
+                Icons.check_rounded,
+                size: 20,
+                color: theme.colorScheme.primary,
+              ),
           ],
         ),
       ),
