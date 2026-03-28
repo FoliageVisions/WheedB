@@ -32,6 +32,11 @@ class MusicPlayerController extends ChangeNotifier {
   bool _shuffleEnabled = false;
   LoopMode _loopMode = LoopMode.off;
 
+  /// When true, stream listeners won't overwrite optimistic state.
+  /// Prevents the playingStream from flipping _isPlaying back to false
+  /// during setAudioSource.
+  bool _suppressStreams = false;
+
   // ── Audio metadata stream ──
   final _audioInfoController = StreamController<AudioInfo>.broadcast();
   Stream<AudioInfo> get audioInfoStream => _audioInfoController.stream;
@@ -72,9 +77,13 @@ class MusicPlayerController extends ChangeNotifier {
     }
 
     // Position stream → update _position + notify UI.
+    // Throttled: only notify when the position changes by ≥500ms to avoid
+    // flooding the widget tree with 5 rebuilds/sec.
     _subs.add(_player!.positionStream.listen((pos) {
+      final changed = (pos.inMilliseconds - _position.inMilliseconds).abs() >= 500 ||
+          pos == Duration.zero;
       _position = pos;
-      notifyListeners();
+      if (changed) notifyListeners();
     }));
 
     // Duration stream → update _duration.
@@ -83,14 +92,17 @@ class MusicPlayerController extends ChangeNotifier {
       notifyListeners();
     }));
 
-    // Playing state.
+    // Playing state — suppressed during playTrack() to avoid overwriting
+    // optimistic _isPlaying = true with a transient false from setAudioSource.
     _subs.add(_player!.playingStream.listen((playing) {
+      if (_suppressStreams) return;
       _isPlaying = playing;
       notifyListeners();
     }));
 
     // Current index changes (e.g. auto-advance).
     _subs.add(_player!.currentIndexStream.listen((idx) {
+      if (_suppressStreams) return;
       if (idx != null && idx != _currentIndex && idx < _queue.length) {
         _currentIndex = idx;
         _emitAudioInfo();
@@ -132,30 +144,75 @@ class MusicPlayerController extends ChangeNotifier {
     _emitAudioInfo();
     notifyListeners();
 
+    // Suppress stream listeners so they don't overwrite our optimistic
+    // state with transient values during setAudioSource / seek.
+    _suppressStreams = true;
+
     try {
       // ── Fast path: same queue → seek to new index only ──
       if (_matchesLoadedQueue(songs)) {
         await _player!.seek(Duration.zero, index: clampedIndex);
+        _suppressStreams = false;
         if (!_player!.playing) await _player!.play();
         return;
       }
 
-      // ── Slow path: build new ConcatenatingAudioSource ──
+      // ── Build a single-track source for instant start, then fill the
+      // queue in the background for gapless next/prev. ──
       _loadedQueueIds = songs.map((s) => s.fileName).toList();
 
-      final sources = songs.map(_buildSource).toList();
+      // Load ONLY the tapped track first.
+      final tappedSource = _buildSource(songs[clampedIndex]);
 
       await _player!.setAudioSource(
-        ConcatenatingAudioSource(children: sources),
-        initialIndex: clampedIndex,
+        ConcatenatingAudioSource(children: [tappedSource]),
+        initialIndex: 0,
         initialPosition: Duration.zero,
       );
 
+      _suppressStreams = false;
       await _player!.play();
+
+      // ── Backfill the rest of the queue asynchronously ──
+      // This lets next/prev work without blocking the initial play.
+      _backfillQueue(songs, playingIndex: clampedIndex);
     } catch (e) {
       debugPrint('[WheedB] playTrack error: $e');
+      _suppressStreams = false;
       _isPlaying = false;
       notifyListeners();
+    }
+  }
+
+  /// Replaces the single-track ConcatenatingAudioSource with the full
+  /// queue so skip-next / skip-prev / auto-advance work.
+  Future<void> _backfillQueue(List<Song> songs, {required int playingIndex}) async {
+    if (_player == null) return;
+    try {
+      final source = _player!.audioSource;
+      if (source is! ConcatenatingAudioSource) return;
+
+      // Build all other sources.
+      final before = <AudioSource>[];
+      final after = <AudioSource>[];
+      for (int i = 0; i < songs.length; i++) {
+        if (i == playingIndex) continue;
+        final s = _buildSource(songs[i]);
+        if (i < playingIndex) {
+          before.add(s);
+        } else {
+          after.add(s);
+        }
+      }
+
+      // Insert items around the already-playing track.
+      if (after.isNotEmpty) await source.addAll(after);
+      if (before.isNotEmpty) await source.insertAll(0, before);
+
+      // Update _currentIndex to account for the inserted items.
+      _currentIndex = playingIndex;
+    } catch (e) {
+      debugPrint('[WheedB] _backfillQueue error: $e');
     }
   }
 
@@ -202,11 +259,16 @@ class MusicPlayerController extends ChangeNotifier {
     _loadedQueueIds = songs.map((s) => s.fileName).toList();
     final sources = songs.map(_buildSource).toList();
 
-    await _player!.setAudioSource(
-      ConcatenatingAudioSource(children: sources),
-      initialIndex: _currentIndex,
-      initialPosition: Duration.zero,
-    );
+    _suppressStreams = true;
+    try {
+      await _player!.setAudioSource(
+        ConcatenatingAudioSource(children: sources),
+        initialIndex: _currentIndex,
+        initialPosition: Duration.zero,
+      );
+    } finally {
+      _suppressStreams = false;
+    }
 
     _emitAudioInfo();
     notifyListeners();
@@ -378,8 +440,14 @@ class _BytesAudioSource extends StreamAudioSource {
       sourceLength: _bytes.length,
       contentLength: effectiveEnd - effectiveStart,
       offset: effectiveStart,
+      // Use buffer view instead of sublist() to avoid copying megabytes
+      // of audio data on every range request — prevents GC pauses.
       stream: Stream.value(
-        _bytes.sublist(effectiveStart, effectiveEnd),
+        Uint8List.view(
+          _bytes.buffer,
+          _bytes.offsetInBytes + effectiveStart,
+          effectiveEnd - effectiveStart,
+        ),
       ),
       contentType: _contentType,
     );
