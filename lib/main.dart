@@ -17,6 +17,7 @@ import 'screens/songs_screen.dart';
 import 'services/database_helper.dart';
 import 'services/cover_art_extractor.dart';
 import 'services/device_music_scanner.dart';
+import 'services/web_library_cache.dart';
 import 'widgets/options_menu_sheet.dart';
 import 'widgets/playback_bar.dart';
 
@@ -94,8 +95,12 @@ class _HomePageState extends State<HomePage> {
         _loading = false;
       });
     } else {
-      // Web: no native audio or database – just show UI.
-      setState(() => _loading = false);
+      // Web: restore cached library from IndexedDB.
+      final cachedSongs = await WebLibraryCache.instance.loadSongs();
+      setState(() {
+        _deviceSongs = cachedSongs;
+        _loading = false;
+      });
     }
   }
 
@@ -517,8 +522,22 @@ class _HomePageState extends State<HomePage> {
 
       // ── 6. Update UI state ──────────────────────────────────────
       setState(() {
-        _deviceSongs = [..._deviceSongs, ...imported];
+        if (kIsWeb) {
+          // Deduplicate by fileName — reimported songs replace cached entries.
+          final byName = {for (final s in _deviceSongs) s.fileName: s};
+          for (final s in imported) {
+            byName[s.fileName] = s;
+          }
+          _deviceSongs = byName.values.toList();
+        } else {
+          _deviceSongs = [..._deviceSongs, ...imported];
+        }
       });
+
+      // Persist metadata to IndexedDB (no-op on native).
+      if (kIsWeb) {
+        WebLibraryCache.instance.saveSongs(_deviceSongs);
+      }
 
       debugPrint('[WheedB Import] Added ${imported.length} song(s). '
           'Total library: ${_deviceSongs.length}');
