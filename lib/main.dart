@@ -157,9 +157,13 @@ class _HomePageState extends State<HomePage> {
   void _toggleFavorite(Song song) {
     final idx = _deviceSongs.indexWhere((s) => s.fileName == song.fileName);
     if (idx == -1) return;
+    final updated = song.copyWith(isFavorite: !song.isFavorite);
     setState(() {
-      _deviceSongs[idx] = song.copyWith(isFavorite: !song.isFavorite);
+      _deviceSongs[idx] = updated;
     });
+    // Keep the player's internal queue in sync so NowPlayingPage /
+    // PlaybackBar heart icon reflects the change immediately.
+    _playback.updateSong(updated);
     if (kIsWeb) {
       WebLibraryCache.instance.saveSongs(_deviceSongs);
     }

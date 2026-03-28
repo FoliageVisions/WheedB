@@ -6,7 +6,7 @@ import '../widgets/playback_bar.dart';
 import '../widgets/song_tile.dart';
 
 /// Shows the songs inside a playlist (smart or manual).
-class PlaylistDetailPage extends StatelessWidget {
+class PlaylistDetailPage extends StatefulWidget {
   final Playlist playlist;
   final void Function(List<Song> queue, int index)? onSongTap;
   final void Function(Song song)? onFavoriteToggle;
@@ -27,9 +27,34 @@ class PlaylistDetailPage extends StatelessWidget {
   });
 
   @override
+  State<PlaylistDetailPage> createState() => _PlaylistDetailPageState();
+}
+
+class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
+  late List<Song> _songs;
+
+  @override
+  void initState() {
+    super.initState();
+    _songs = List.of(widget.playlist.songs);
+  }
+
+  void _handleFavoriteToggle(Song song) {
+    // Update the local copy so the heart icon reflects the change.
+    final idx = _songs.indexWhere((s) => s.fileName == song.fileName);
+    if (idx != -1) {
+      setState(() {
+        _songs[idx] = song.copyWith(isFavorite: !song.isFavorite);
+      });
+    }
+    // Propagate to the parent (main.dart) to persist & sync controller.
+    widget.onFavoriteToggle?.call(song);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final songs = playlist.songs;
+    final songs = _songs;
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -42,7 +67,7 @@ class PlaylistDetailPage extends StatelessWidget {
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
-          playlist.name,
+          widget.playlist.name,
           style: theme.textTheme.titleLarge?.copyWith(
             color: theme.colorScheme.onSurface,
             fontWeight: FontWeight.w700,
@@ -59,7 +84,7 @@ class PlaylistDetailPage extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
-                          playlist.icon,
+                          widget.playlist.icon,
                           size: 56,
                           color: theme.colorScheme.onSurfaceVariant
                               .withValues(alpha: 0.4),
@@ -75,9 +100,9 @@ class PlaylistDetailPage extends StatelessWidget {
                     ),
                   )
                 : ListenableBuilder(
-                    listenable: controller ?? const _NoOpListenable(),
+                    listenable: widget.controller ?? const _NoOpListenable(),
                     builder: (context, _) {
-                      final playing = controller?.currentSong;
+                      final playing = widget.controller?.currentSong;
                       return ListView.builder(
                         itemCount: songs.length,
                         itemBuilder: (context, index) {
@@ -85,16 +110,16 @@ class PlaylistDetailPage extends StatelessWidget {
                           return SongTile(
                             song: song,
                             isPlaying: identical(song, playing),
-                            showRemoveOption: !playlist.isSmart,
-                            onTap: () => onSongTap?.call(songs, index),
-                            onFavoriteToggle: onFavoriteToggle != null
-                                ? () => onFavoriteToggle!(song)
+                            showRemoveOption: !widget.playlist.isSmart,
+                            onTap: () => widget.onSongTap?.call(songs, index),
+                            onFavoriteToggle: widget.onFavoriteToggle != null
+                                ? () => _handleFavoriteToggle(song)
                                 : null,
                             onMenuAction: (action) {
                               if (action == SongTileAction.removeFromPlaylist) {
-                                onRemoveFromPlaylist?.call(playlist, song);
+                                widget.onRemoveFromPlaylist?.call(widget.playlist, song);
                               } else {
-                                onMenuAction?.call(song, action);
+                                widget.onMenuAction?.call(song, action);
                               }
                             },
                           );
@@ -103,14 +128,14 @@ class PlaylistDetailPage extends StatelessWidget {
                     },
                   ),
           ),
-          if (controller != null)
+          if (widget.controller != null)
             RepaintBoundary(
               child: PlaybackBar(
-                controller: controller!,
-                onSongMenuAction: onMenuAction,
-                currentPlaylist: playlist.isSmart ? null : playlist,
-                onRemoveFromPlaylist: onRemoveFromPlaylist,
-                onFavoriteToggle: onFavoriteToggle,
+                controller: widget.controller!,
+                onSongMenuAction: widget.onMenuAction,
+                currentPlaylist: widget.playlist.isSmart ? null : widget.playlist,
+                onRemoveFromPlaylist: widget.onRemoveFromPlaylist,
+                onFavoriteToggle: widget.onFavoriteToggle,
               ),
             ),
         ],

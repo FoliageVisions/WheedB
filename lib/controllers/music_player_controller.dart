@@ -253,6 +253,16 @@ class MusicPlayerController extends ChangeNotifier {
     return true;
   }
 
+  /// Update a song in the internal queue (e.g. after toggling favorite).
+  /// Matches by [fileName] and replaces the entry so that [currentSong]
+  /// and any UI listening to this controller reflects the change.
+  void updateSong(Song updated) {
+    final idx = _queue.indexWhere((s) => s.fileName == updated.fileName);
+    if (idx == -1) return;
+    _queue[idx] = updated;
+    notifyListeners();
+  }
+
   // ── Transport controls ──
 
   Future<void> togglePlayPause() async {
@@ -389,9 +399,9 @@ class MusicPlayerController extends ChangeNotifier {
   }
 }
 
-/// A [StreamAudioSource] that serves audio from an in-memory [Uint8List].
+/// A `StreamAudioSource` that serves audio from an in-memory [Uint8List].
 /// Used for web imports where only bytes (not file paths) are available.
-// ignore: subtype_of_sealed_class
+// ignore: subtype_of_sealed_class, experimental_member_use
 class _BytesAudioSource extends StreamAudioSource {
   final Uint8List _bytes;
   final String _contentType;
@@ -415,9 +425,11 @@ class _BytesAudioSource extends StreamAudioSource {
   }
 
   @override
+  // ignore: experimental_member_use
   Future<StreamAudioResponse> request([int? start, int? end]) async {
     final effectiveStart = start ?? 0;
     final effectiveEnd = end ?? _bytes.length;
+    // ignore: experimental_member_use
     return StreamAudioResponse(
       sourceLength: _bytes.length,
       contentLength: effectiveEnd - effectiveStart,
