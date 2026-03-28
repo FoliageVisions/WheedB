@@ -1,5 +1,6 @@
 import 'dart:io';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:file_picker/file_picker.dart';
@@ -16,7 +17,6 @@ import 'screens/songs_screen.dart';
 import 'services/database_helper.dart';
 import 'services/cover_art_extractor.dart';
 import 'services/device_music_scanner.dart';
-import 'widgets/import_music_sheet.dart';
 import 'widgets/options_menu_sheet.dart';
 import 'widgets/playback_bar.dart';
 
@@ -243,9 +243,118 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _showImportSheet() async {
-    final confirmed = await ImportMusicSheet.show(context);
-    if (confirmed != true) return; // dismissed
+    final confirmed = await _showImportConfirmDialog();
+    if (confirmed != true) return;
     await _importFromFiles();
+  }
+
+  /// Shows a platform-adaptive confirmation dialog before launching the
+  /// native audio file picker.
+  Future<bool?> _showImportConfirmDialog() {
+    final isApple = !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.iOS ||
+         defaultTargetPlatform == TargetPlatform.macOS);
+
+    if (isApple) {
+      return showCupertinoDialog<bool>(
+        context: context,
+        builder: (ctx) => CupertinoAlertDialog(
+          title: const Text('Import Music'),
+          content: const Text(
+            'Would you like to proceed with importing audio files '
+            'from your device to the app?',
+          ),
+          actions: [
+            CupertinoDialogAction(
+              isDefaultAction: true,
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            CupertinoDialogAction(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Proceed'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        final accent = theme.colorScheme.primary;
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1E1E1E),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.library_music_rounded,
+                  color: accent,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                'Import Music',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 18,
+                ),
+              ),
+            ],
+          ),
+          content: Text(
+            'Would you like to proceed with importing audio files '
+            'from your device to the app?',
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.7),
+              fontSize: 14.5,
+              height: 1.4,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(
+                'Cancel',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.5),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(
+                backgroundColor: accent,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: const Text(
+                'Proceed',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _importFromFiles({Playlist? targetPlaylist}) async {
