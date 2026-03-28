@@ -29,6 +29,8 @@ class MusicPlayerController extends ChangeNotifier {
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   bool _isPlaying = false;
+  bool _shuffleEnabled = false;
+  LoopMode _loopMode = LoopMode.off;
 
   // ── Audio metadata stream ──
   final _audioInfoController = StreamController<AudioInfo>.broadcast();
@@ -45,6 +47,8 @@ class MusicPlayerController extends ChangeNotifier {
   Duration get remaining =>
       _duration > _position ? _duration - _position : Duration.zero;
   bool get hasQueue => _queue.isNotEmpty;
+  bool get shuffleEnabled => _shuffleEnabled;
+  LoopMode get loopMode => _loopMode;
 
   AudioPlayer? get player => _player;
 
@@ -193,6 +197,27 @@ class MusicPlayerController extends ChangeNotifier {
     await _player!.seek(Duration.zero, index: newIndex);
     _currentIndex = newIndex;
     _emitAudioInfo();
+    notifyListeners();
+  }
+
+  Future<void> toggleShuffle() async {
+    if (_player == null) return;
+    _shuffleEnabled = !_shuffleEnabled;
+    await _player!.setShuffleModeEnabled(_shuffleEnabled);
+    notifyListeners();
+  }
+
+  Future<void> cycleLoopMode() async {
+    if (_player == null) return;
+    switch (_loopMode) {
+      case LoopMode.off:
+        _loopMode = LoopMode.all;
+      case LoopMode.all:
+        _loopMode = LoopMode.one;
+      case LoopMode.one:
+        _loopMode = LoopMode.off;
+    }
+    await _player!.setLoopMode(_loopMode);
     notifyListeners();
   }
 

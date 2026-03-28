@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:just_audio/just_audio.dart';
 import '../controllers/music_player_controller.dart';
 import '../models/song.dart';
 
@@ -160,6 +161,13 @@ class PlaybackBar extends StatelessWidget {
                       const SizedBox(width: 8),
 
                       // ── Transport buttons ──
+                      _ShuffleRepeatButton(
+                        icon: Icons.shuffle_rounded,
+                        isActive: controller.shuffleEnabled,
+                        onPressed: controller.toggleShuffle,
+                        tooltip: 'Shuffle',
+                        activeColor: theme.colorScheme.primary,
+                      ),
                       IconButton(
                         icon: const Icon(Icons.skip_previous_rounded),
                         iconSize: 28,
@@ -182,6 +190,19 @@ class PlaybackBar extends StatelessWidget {
                         iconSize: 28,
                         color: theme.colorScheme.onSurface,
                         onPressed: controller.skipNext,
+                      ),
+                      _ShuffleRepeatButton(
+                        icon: controller.loopMode == LoopMode.one
+                            ? Icons.repeat_one_rounded
+                            : Icons.repeat_rounded,
+                        isActive: controller.loopMode != LoopMode.off,
+                        onPressed: controller.cycleLoopMode,
+                        tooltip: switch (controller.loopMode) {
+                          LoopMode.off => 'Repeat: off',
+                          LoopMode.all => 'Repeat: all',
+                          LoopMode.one => 'Repeat: one',
+                        },
+                        activeColor: theme.colorScheme.primary,
                       ),
                     ],
                   ),
@@ -233,6 +254,60 @@ class _QualityBadges extends StatelessWidget {
           fontWeight: FontWeight.w700,
           letterSpacing: 0.4,
           height: 1.2,
+        ),
+      ),
+    );
+  }
+}
+
+// ── Shuffle / Repeat toggle button ──────────────────────────────────────
+
+class _ShuffleRepeatButton extends StatelessWidget {
+  final IconData icon;
+  final bool isActive;
+  final VoidCallback onPressed;
+  final String tooltip;
+  final Color activeColor;
+
+  const _ShuffleRepeatButton({
+    required this.icon,
+    required this.isActive,
+    required this.onPressed,
+    required this.tooltip,
+    required this.activeColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final inactiveColor =
+        theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.4);
+
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onPressed,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isActive
+                  ? activeColor.withValues(alpha: 0.15)
+                  : Colors.transparent,
+            ),
+            child: Icon(
+              icon,
+              size: 18,
+              color: isActive ? activeColor : inactiveColor,
+            ),
+          ),
         ),
       ),
     );
