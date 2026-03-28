@@ -10,8 +10,8 @@ import '../services/audio_handler.dart';
 /// Maintains the same public API surface as the old simulated
 /// PlaybackController so all existing UI widgets work unchanged.
 class MusicPlayerController extends ChangeNotifier {
-  late final AudioPlayer _player;
-  late final YourTuneAudioHandler _handler;
+  AudioPlayer? _player;
+  YourTuneAudioHandler? _handler;
   bool _initialised = false;
 
   List<Song> _queue = [];
@@ -45,7 +45,7 @@ class MusicPlayerController extends ChangeNotifier {
       _duration > _position ? _duration - _position : Duration.zero;
   bool get hasQueue => _queue.isNotEmpty;
 
-  AudioPlayer get player => _player;
+  AudioPlayer? get player => _player;
 
   /// Must be called once before any playback.
   Future<void> init() async {
@@ -54,7 +54,7 @@ class MusicPlayerController extends ChangeNotifier {
     _player = AudioPlayer();
 
     _handler = await AudioService.init<YourTuneAudioHandler>(
-      builder: () => YourTuneAudioHandler(_player),
+      builder: () => YourTuneAudioHandler(_player!),
       config: const AudioServiceConfig(
         androidNotificationChannelId: 'com.yourtune.audio',
         androidNotificationChannelName: 'YourTune Playback',
@@ -64,25 +64,25 @@ class MusicPlayerController extends ChangeNotifier {
     );
 
     // Position stream → update _position + notify UI.
-    _subs.add(_player.positionStream.listen((pos) {
+    _subs.add(_player!.positionStream.listen((pos) {
       _position = pos;
       notifyListeners();
     }));
 
     // Duration stream → update _duration.
-    _subs.add(_player.durationStream.listen((dur) {
+    _subs.add(_player!.durationStream.listen((dur) {
       _duration = dur ?? Duration.zero;
       notifyListeners();
     }));
 
     // Playing state.
-    _subs.add(_player.playingStream.listen((playing) {
+    _subs.add(_player!.playingStream.listen((playing) {
       _isPlaying = playing;
       notifyListeners();
     }));
 
     // Current index changes (e.g. auto-advance).
-    _subs.add(_player.currentIndexStream.listen((idx) {
+    _subs.add(_player!.currentIndexStream.listen((idx) {
       if (idx != null && idx != _currentIndex && idx < _queue.length) {
         _currentIndex = idx;
         _emitAudioInfo();
@@ -92,7 +92,7 @@ class MusicPlayerController extends ChangeNotifier {
 
     // When a track completes and we aren't looping, just_audio handles the
     // advance via ConcatenatingAudioSource; we listen for the sequence change.
-    _subs.add(_player.processingStateStream.listen((state) {
+    _subs.add(_player!.processingStateStream.listen((state) {
       if (state == ProcessingState.completed) {
         notifyListeners();
       }
@@ -104,6 +104,7 @@ class MusicPlayerController extends ChangeNotifier {
   // ── Queue management ──
 
   Future<void> loadQueue(List<Song> songs, {int startIndex = 0}) async {
+    if (_player == null) return;
     _queue = List.of(songs);
     _currentIndex = startIndex.clamp(0, _queue.length - 1);
 
@@ -126,7 +127,7 @@ class MusicPlayerController extends ChangeNotifier {
       );
     }).toList();
 
-    await _player.setAudioSource(
+    await _player!.setAudioSource(
       ConcatenatingAudioSource(children: sources),
       initialIndex: _currentIndex,
       initialPosition: Duration.zero,
@@ -139,11 +140,12 @@ class MusicPlayerController extends ChangeNotifier {
   // ── Transport controls ──
 
   Future<void> togglePlayPause() async {
-    if (currentSong == null) return;
-    _isPlaying ? await _player.pause() : await _player.play();
+    if (currentSong == null || _player == null) return;
+    _isPlaying ? await _player!.pause() : await _player!.play();
   }
 
   Future<void> seekTo(Duration target) async {
+    if (_player == null) return;
     Duration clamped;
     if (target < Duration.zero) {
       clamped = Duration.zero;
@@ -152,7 +154,7 @@ class MusicPlayerController extends ChangeNotifier {
     } else {
       clamped = target;
     }
-    await _player.seek(clamped);
+    await _player!.seek(clamped);
   }
 
   /// Dual-logic back button:
@@ -171,19 +173,19 @@ class MusicPlayerController extends ChangeNotifier {
   }
 
   Future<void> skipPrevious() async {
-    if (_queue.isEmpty) return;
+    if (_queue.isEmpty || _player == null) return;
     final newIndex =
         (_currentIndex - 1 < 0) ? _queue.length - 1 : _currentIndex - 1;
-    await _player.seek(Duration.zero, index: newIndex);
+    await _player!.seek(Duration.zero, index: newIndex);
     _currentIndex = newIndex;
     _emitAudioInfo();
     notifyListeners();
   }
 
   Future<void> skipNext() async {
-    if (_queue.isEmpty) return;
+    if (_queue.isEmpty || _player == null) return;
     final newIndex = (_currentIndex + 1) % _queue.length;
-    await _player.seek(Duration.zero, index: newIndex);
+    await _player!.seek(Duration.zero, index: newIndex);
     _currentIndex = newIndex;
     _emitAudioInfo();
     notifyListeners();
@@ -202,7 +204,7 @@ class MusicPlayerController extends ChangeNotifier {
     ));
 
     // Update the media item for lock-screen / notification display.
-    _handler.mediaItem.add(MediaItem(
+    _handler?.mediaItem.add(MediaItem(
       id: song.fileName,
       title: song.title,
       artist: song.artist,
@@ -219,7 +221,7 @@ class MusicPlayerController extends ChangeNotifier {
       sub.cancel();
     }
     _audioInfoController.close();
-    _player.dispose();
+    _player?.dispose();
     super.dispose();
   }
 }

@@ -71,9 +71,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _initPlayer() async {
-    await _playback.init();
-
     if (!kIsWeb) {
+      await _playback.init();
+
       final granted = await _scanner.requestPermission();
       if (granted) {
         final songs = await _scanner.scanAllSongs();
@@ -85,13 +85,16 @@ class _HomePageState extends State<HomePage> {
         });
         return;
       }
-    }
 
-    final playlists = await DatabaseHelper.instance.loadPlaylists();
-    setState(() {
-      _manualPlaylists = playlists;
-      _loading = false;
-    });
+      final playlists = await DatabaseHelper.instance.loadPlaylists();
+      setState(() {
+        _manualPlaylists = playlists;
+        _loading = false;
+      });
+    } else {
+      // Web: no native audio or database – just show UI.
+      setState(() => _loading = false);
+    }
   }
 
   @override
@@ -111,6 +114,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _refreshPlaylists() async {
+    if (kIsWeb) return;
     final playlists = await DatabaseHelper.instance.loadPlaylists();
     setState(() => _manualPlaylists = playlists);
   }
