@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
@@ -18,10 +19,18 @@ class DatabaseHelper {
 
   Future<Database> _initDatabase() async {
     final dbPath = await getDatabasesPath();
-    final path = join(dbPath, 'wheedb.db');
+    final newPath = join(dbPath, 'wheedb.db');
+
+    // One-time migration: copy old yourtune.db → wheedb.db if it exists
+    // and the new database hasn't been created yet.
+    final oldPath = join(dbPath, 'yourtune.db');
+    if (!File(newPath).existsSync() && File(oldPath).existsSync()) {
+      debugPrint('[WheedB DB] Migrating yourtune.db → wheedb.db');
+      await File(oldPath).copy(newPath);
+    }
 
     return openDatabase(
-      path,
+      newPath,
       version: 4,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
