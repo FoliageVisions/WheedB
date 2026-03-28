@@ -35,10 +35,12 @@ class _SongsScreenState extends State<SongsScreen> {
   @override
   void didUpdateWidget(covariant SongsScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.songs != oldWidget.songs) {
+    // Rebuild search index only when the list identity changes (add/remove).
+    if (!identical(widget.songs, oldWidget.songs)) {
       _searchIndex = SongSearchIndex(widget.songs);
-      _filtered = _searchIndex.search(_searchController.text);
     }
+    // Always re-filter to pick up in-place song updates (e.g. importStatus).
+    _filtered = _searchIndex.search(_searchController.text);
   }
 
   @override

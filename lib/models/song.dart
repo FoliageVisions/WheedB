@@ -1,5 +1,8 @@
 import 'dart:typed_data';
 
+/// Import lifecycle state shown in the UI.
+enum SongImportStatus { ready, importing, failed }
+
 class Song {
   final int? id;
   final String title;
@@ -26,6 +29,9 @@ class Song {
 
   /// Bit depth (e.g. 16, 24, 32).
   final int bitDepth;
+
+  /// Current import status (optimistic UI).
+  final SongImportStatus importStatus;
 
   /// Pre-computed lowercase search key for fast filtering.
   late final String _searchKey;
@@ -75,6 +81,7 @@ class Song {
     this.isFavorite = false,
     this.sampleRateHz = 44100,
     this.bitDepth = 16,
+    this.importStatus = SongImportStatus.ready,
   }) : dateAdded = dateAdded ?? DateTime.now() {
     _searchKey = '$title\u0000$artist\u0000$album\u0000$fileName'.toLowerCase();
   }
@@ -96,6 +103,7 @@ class Song {
     bool? isFavorite,
     int? sampleRateHz,
     int? bitDepth,
+    SongImportStatus? importStatus,
   }) {
     return Song(
       id: id ?? this.id,
@@ -111,6 +119,7 @@ class Song {
       isFavorite: isFavorite ?? this.isFavorite,
       sampleRateHz: sampleRateHz ?? this.sampleRateHz,
       bitDepth: bitDepth ?? this.bitDepth,
+      importStatus: importStatus ?? this.importStatus,
     );
   }
 }

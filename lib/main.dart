@@ -390,14 +390,12 @@ class _HomePageState extends State<HomePage> {
     // ── 1. Permission check (mobile only) ──────────────────────────
     if (!kIsWeb) {
       PermissionStatus status;
-      // Android 13+ uses READ_MEDIA_AUDIO; older versions use storage.
       if (Platform.isAndroid) {
         status = await Permission.audio.request();
         if (!status.isGranted) {
           status = await Permission.storage.request();
         }
       } else {
-        // iOS: media library permission.
         status = await Permission.mediaLibrary.request();
       }
 
@@ -417,7 +415,6 @@ class _HomePageState extends State<HomePage> {
             ),
           );
         }
-        debugPrint('[WheedB Import] Permission permanently denied');
         return;
       }
 
@@ -430,200 +427,22 @@ class _HomePageState extends State<HomePage> {
             ),
           );
         }
-        debugPrint('[WheedB Import] Permission denied: $status');
         return;
       }
     }
 
     // ── 2. Pick files ──────────────────────────────────────────────
+    FilePickerResult? result;
     try {
-      debugPrint('[WheedB Import] Opening file picker (kIsWeb=$kIsWeb)');
-
-      final result = await FilePicker.platform.pickFiles(
+      result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: [
           'mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg', 'wma', 'aiff', 'alac',
         ],
         allowMultiple: true,
-        withData: kIsWeb, // Bytes needed on web; mobile uses file paths.
+        withData: kIsWeb,
       );
-
-      if (result == null || result.files.isEmpty) {
-        debugPrint('[WheedB Import] User cancelled picker');
-        return;
-      }
-
-      debugPrint('[WheedB Import] Picked ${result.files.length} file(s)');
-
-      // ── 3. Build Song objects (hybrid: path on mobile, bytes on web) ──
-      final imported = <Song>[];
-      int skipped = 0;
-
-      for (final file in result.files) {
-        // On web, accessing file.path throws — only use bytes.
-        // On mobile, we need a path; bytes are optional.
-        final String? filePath = kIsWeb ? null : file.path;
-        final hasPath = filePath != null && filePath.isNotEmpty;
-        final hasBytes = file.bytes != null && file.bytes!.isNotEmpty;
-
-        if (!hasPath && !hasBytes) {
-          debugPrint('[WheedB Import] Skipped "${file.name}" – no path or bytes');
-          skipped++;
-          continue;
-        }
-
-        final fileName = file.name;
-        final nameWithoutExt = p.basenameWithoutExtension(fileName);
-
-        // Best-effort title/artist split on " - " convention.
-        String title;
-        String artist;
-        if (nameWithoutExt.contains(' - ')) {
-          final parts = nameWithoutExt.split(' - ');
-          artist = parts.first.trim();
-          title = parts.sublist(1).join(' - ').trim();
-        } else {
-          title = nameWithoutExt;
-          artist = 'Unknown Artist';
-        }
-
-        // ── Parse real audio metadata from file headers ──
-        Uint8List headerBytes;
-        int fileSize;
-
-        if (kIsWeb) {
-          headerBytes = file.bytes!;
-          fileSize = file.bytes!.length;
-        } else {
-          final ioFile = File(filePath!);
-          fileSize = await ioFile.length();
-          final raf = await ioFile.open(mode: FileMode.read);
-          headerBytes = await raf.read(min(8192, fileSize));
-          await raf.close();
-        }
-
-        final meta = AudioMetadataParser.parse(
-          headerBytes, fileName, fileSize: fileSize,
-        );
-
-        imported.add(Song(
-          title: title,
-          artist: artist,
-          album: 'Imported',
-          fileName: fileName,
-          filePath: filePath,
-          audioBytes: kIsWeb ? file.bytes : null,
-          sampleRateHz: meta.sampleRateHz,
-          bitDepth: meta.bitDepth,
-          duration: meta.duration ?? Duration.zero,
-        ));
-
-        debugPrint('[WheedB Import] ✓ "$title" by $artist '
-            '(path=${hasPath ? "yes" : "no"}, bytes=${hasBytes ? "${file.bytes!.length}B" : "no"})');
-      }
-
-      // ── 4. Probe duration on web for songs that header parsing missed ──
-      if (kIsWeb) {
-        final futures = <Future<void>>[];
-        for (int i = 0; i < imported.length; i++) {
-          if (imported[i].duration == Duration.zero &&
-              imported[i].audioBytes != null) {
-            final idx = i;
-            futures.add(
-              AudioProber.probeDuration(
-                bytes: imported[idx].audioBytes,
-                fileName: imported[idx].fileName,
-              ).then((dur) {
-                if (dur != null) {
-                  imported[idx] = imported[idx].copyWith(duration: dur);
-                }
-              }),
-            );
-          }
-        }
-        if (futures.isNotEmpty) await Future.wait(futures);
-      }
-
-      // ── 5. Handle empty result ──────────────────────────────────
-      if (imported.isEmpty) {
-        if (mounted && skipped > 0) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Could not access $skipped selected file${skipped == 1 ? '' : 's'}. '
-                'Try selecting files from local storage.',
-              ),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-        debugPrint('[WheedB Import] All $skipped files skipped');
-        return;
-      }
-
-      // ── 6. Playlist association (mobile only — DB unavailable on web) ──
-      if (!kIsWeb && targetPlaylist != null && targetPlaylist.id != null) {
-        await DatabaseHelper.instance
-            .addSongsToPlaylist(targetPlaylist.id!, imported);
-
-        if (!targetPlaylist.isManualCover) {
-          final filePaths = imported
-              .where((s) => s.filePath != null)
-              .map((s) => s.filePath!)
-              .toList();
-          final artPath = await CoverArtExtractor.instance.extractAndSave(
-            filePaths: filePaths,
-            collectionId: targetPlaylist.id!,
-            collectionType: 'playlist',
-          );
-          if (artPath != null) {
-            await DatabaseHelper.instance.updateCoverArt(
-              id: targetPlaylist.id!,
-              isPlaylist: true,
-              path: artPath,
-            );
-          }
-        }
-
-        await _refreshPlaylists();
-      }
-
-      // ── 7. Update UI state ──────────────────────────────────────
-      setState(() {
-        if (kIsWeb) {
-          // Deduplicate by fileName — reimported songs replace cached entries.
-          final byName = {for (final s in _deviceSongs) s.fileName: s};
-          for (final s in imported) {
-            byName[s.fileName] = s;
-          }
-          _deviceSongs = byName.values.toList();
-        } else {
-          _deviceSongs = [..._deviceSongs, ...imported];
-        }
-      });
-
-      // Persist metadata to IndexedDB (no-op on native).
-      if (kIsWeb) {
-        WebLibraryCache.instance.saveSongs(_deviceSongs);
-      }
-
-      debugPrint('[WheedB Import] Added ${imported.length} song(s). '
-          'Total library: ${_deviceSongs.length}');
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Imported ${imported.length} song${imported.length == 1 ? '' : 's'}'
-              '${skipped > 0 ? ' ($skipped skipped)' : ''}',
-            ),
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
     } on PlatformException catch (e) {
-      debugPrint('[WheedB Import] PlatformException: ${e.code} – ${e.message}');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -632,17 +451,215 @@ class _HomePageState extends State<HomePage> {
           ),
         );
       }
-    } catch (e, st) {
-      debugPrint('[WheedB Import] Unexpected error: $e\n$st');
-      if (mounted) {
+      return;
+    }
+
+    if (result == null || result.files.isEmpty) return;
+
+    debugPrint('[WheedB Import] Picked ${result.files.length} file(s)');
+
+    // ── 3. Optimistic insert: add placeholder songs immediately ────
+    final placeholders = <Song>[];
+    final pickedFiles = <PlatformFile>[];
+    int skipped = 0;
+
+    for (final file in result.files) {
+      final String? filePath = kIsWeb ? null : file.path;
+      final hasPath = filePath != null && filePath.isNotEmpty;
+      final hasBytes = file.bytes != null && file.bytes!.isNotEmpty;
+
+      if (!hasPath && !hasBytes) {
+        skipped++;
+        continue;
+      }
+
+      final fileName = file.name;
+      final nameWithoutExt = p.basenameWithoutExtension(fileName);
+      String title;
+      String artist;
+      if (nameWithoutExt.contains(' - ')) {
+        final parts = nameWithoutExt.split(' - ');
+        artist = parts.first.trim();
+        title = parts.sublist(1).join(' - ').trim();
+      } else {
+        title = nameWithoutExt;
+        artist = 'Unknown Artist';
+      }
+
+      placeholders.add(Song(
+        title: title,
+        artist: artist,
+        album: 'Imported',
+        fileName: fileName,
+        filePath: filePath,
+        audioBytes: kIsWeb ? file.bytes : null,
+        importStatus: SongImportStatus.importing,
+      ));
+      pickedFiles.add(file);
+    }
+
+    if (placeholders.isEmpty) {
+      if (mounted && skipped > 0) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Import failed: $e'),
+            content: Text(
+              'Could not access $skipped selected file${skipped == 1 ? '' : 's'}. '
+              'Try selecting files from local storage.',
+            ),
             behavior: SnackBarBehavior.floating,
           ),
         );
       }
+      return;
     }
+
+    // Insert placeholders into the list so the UI shows them instantly.
+    if (kIsWeb) {
+      final byName = {for (final s in _deviceSongs) s.fileName: s};
+      for (final s in placeholders) {
+        byName[s.fileName] = s;
+      }
+      setState(() => _deviceSongs = byName.values.toList());
+    } else {
+      setState(() => _deviceSongs = [..._deviceSongs, ...placeholders]);
+    }
+
+    // ── 4. Background: parse metadata per-track with error isolation ──
+    int succeeded = 0;
+    int failed = 0;
+
+    for (int i = 0; i < placeholders.length; i++) {
+      final placeholder = placeholders[i];
+      final file = pickedFiles[i];
+
+      try {
+        // Parse header metadata.
+        Uint8List headerBytes;
+        int fileSize;
+
+        if (kIsWeb) {
+          headerBytes = file.bytes!;
+          fileSize = file.bytes!.length;
+        } else {
+          final ioFile = File(placeholder.filePath!);
+          fileSize = await ioFile.length();
+          final raf = await ioFile.open(mode: FileMode.read);
+          headerBytes = await raf.read(min(8192, fileSize));
+          await raf.close();
+        }
+
+        final meta = AudioMetadataParser.parse(
+          headerBytes, placeholder.fileName, fileSize: fileSize,
+        );
+
+        Duration duration = meta.duration ?? Duration.zero;
+
+        // On web, fall back to Audio element probing for duration.
+        if (kIsWeb && duration == Duration.zero && placeholder.audioBytes != null) {
+          final probed = await AudioProber.probeDuration(
+            bytes: placeholder.audioBytes,
+            fileName: placeholder.fileName,
+          );
+          if (probed != null) duration = probed;
+        }
+
+        final ready = placeholder.copyWith(
+          sampleRateHz: meta.sampleRateHz,
+          bitDepth: meta.bitDepth,
+          duration: duration,
+          importStatus: SongImportStatus.ready,
+        );
+
+        // Swap the placeholder in the list (single-item update).
+        _replaceSongByFileName(placeholder.fileName, ready);
+        succeeded++;
+
+        debugPrint('[WheedB Import] ✓ "${ready.title}" '
+            '${meta.sampleRateHz}Hz/${meta.bitDepth}-bit '
+            '${duration.inSeconds}s');
+      } catch (e) {
+        // Mark this single track as failed — other tracks keep going.
+        debugPrint('[WheedB Import] ✗ "${placeholder.title}": $e');
+        _replaceSongByFileName(
+          placeholder.fileName,
+          placeholder.copyWith(importStatus: SongImportStatus.failed),
+        );
+        failed++;
+      }
+    }
+
+    // ── 5. Playlist association (mobile only) ──────────────────────
+    final readySongs = _deviceSongs
+        .where((s) => placeholders.any((p) => p.fileName == s.fileName) &&
+            s.importStatus == SongImportStatus.ready)
+        .toList();
+
+    if (!kIsWeb && targetPlaylist != null && targetPlaylist.id != null &&
+        readySongs.isNotEmpty) {
+      await DatabaseHelper.instance
+          .addSongsToPlaylist(targetPlaylist.id!, readySongs);
+
+      if (!targetPlaylist.isManualCover) {
+        final filePaths = readySongs
+            .where((s) => s.filePath != null)
+            .map((s) => s.filePath!)
+            .toList();
+        final artPath = await CoverArtExtractor.instance.extractAndSave(
+          filePaths: filePaths,
+          collectionId: targetPlaylist.id!,
+          collectionType: 'playlist',
+        );
+        if (artPath != null) {
+          await DatabaseHelper.instance.updateCoverArt(
+            id: targetPlaylist.id!,
+            isPlaylist: true,
+            path: artPath,
+          );
+        }
+      }
+      await _refreshPlaylists();
+    }
+
+    // ── 6. Remove failed tracks, persist to IndexedDB ─────────────
+    setState(() {
+      _deviceSongs = _deviceSongs
+          .where((s) => s.importStatus != SongImportStatus.failed)
+          .toList();
+    });
+
+    if (kIsWeb) {
+      WebLibraryCache.instance.saveSongs(_deviceSongs);
+    }
+
+    debugPrint('[WheedB Import] Done: $succeeded ok, $failed failed, '
+        '$skipped skipped. Total: ${_deviceSongs.length}');
+
+    if (mounted) {
+      final parts = <String>[];
+      if (succeeded > 0) {
+        parts.add('Imported $succeeded song${succeeded == 1 ? '' : 's'}');
+      }
+      if (failed > 0) parts.add('$failed failed');
+      if (skipped > 0) parts.add('$skipped skipped');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(parts.join(' · ')),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  /// Swap a single song in [_deviceSongs] by fileName and trigger a
+  /// minimal setState. Only the affected SongTile rebuilds because the
+  /// list identity stays the same and RepaintBoundary isolates items.
+  void _replaceSongByFileName(String fileName, Song replacement) {
+    final idx = _deviceSongs.indexWhere((s) => s.fileName == fileName);
+    if (idx == -1) return;
+    setState(() {
+      _deviceSongs[idx] = replacement;
+    });
   }
 
   // ── Library three-dots action handlers ───────────────────────────
