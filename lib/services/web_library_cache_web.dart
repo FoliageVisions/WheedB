@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:js_interop';
+import 'dart:typed_data';
 import 'package:web/web.dart' as web;
 import '../models/song.dart';
 
@@ -9,7 +10,7 @@ class WebLibraryCache {
   WebLibraryCache._();
 
   static const _dbName = 'wheedb_library';
-  static const _dbVersion = 1;
+  static const _dbVersion = 2;
   static const _songStore = 'songs';
 
   web.IDBDatabase? _db;
@@ -30,6 +31,8 @@ class WebLibraryCache {
           web.IDBObjectStoreParameters(keyPath: 'fileName'.toJS),
         );
       }
+      // v2: audio bytes stored inline — no schema change needed,
+      // just new fields in existing records.
     }).toJS;
 
     request.onsuccess = ((web.Event _) {
@@ -101,29 +104,45 @@ class WebLibraryCache {
 
   // ── Serialisation helpers ────────────────────────────────────────
 
-  JSAny _songToJS(Song s) => <String, Object>{
-        'fileName': s.fileName,
-        'title': s.title,
-        'artist': s.artist,
-        'album': s.album,
-        'durationMs': s.duration.inMilliseconds,
-        'isFavorite': s.isFavorite,
-        'playCount': s.playCount,
-        'sampleRateHz': s.sampleRateHz,
-        'bitDepth': s.bitDepth,
-        'dateAdded': s.dateAdded.toIso8601String(),
-      }.jsify()!;
+  JSAny _songToJS(Song s) {
+    final map = <String, Object>{
+      'fileName': s.fileName,
+      'title': s.title,
+      'artist': s.artist,
+      'album': s.album,
+      'durationMs': s.duration.inMilliseconds,
+      'isFavorite': s.isFavorite,
+      'playCount': s.playCount,
+      'sampleRateHz': s.sampleRateHz,
+      'bitDepth': s.bitDepth,
+      'dateAdded': s.dateAdded.toIso8601String(),
+    };
+    if (s.audioBytes != null) {
+      map['audioBytes'] = s.audioBytes!;
+    }
+    return map.jsify()!;
+  }
 
-  Song _songFromMap(Map<String, dynamic> m) => Song(
-        title: m['title'] as String? ?? '',
-        artist: m['artist'] as String? ?? 'Unknown Artist',
-        album: m['album'] as String? ?? 'Imported',
-        fileName: m['fileName'] as String? ?? '',
-        duration: Duration(milliseconds: (m['durationMs'] as num?)?.toInt() ?? 0),
-        isFavorite: m['isFavorite'] as bool? ?? false,
-        playCount: (m['playCount'] as num?)?.toInt() ?? 0,
-        sampleRateHz: (m['sampleRateHz'] as num?)?.toInt() ?? 44100,
-        bitDepth: (m['bitDepth'] as num?)?.toInt() ?? 16,
-        dateAdded: DateTime.tryParse(m['dateAdded'] as String? ?? '') ?? DateTime.now(),
-      );
+  Song _songFromMap(Map<String, dynamic> m) {
+    Uint8List? bytes;
+    final raw = m['audioBytes'];
+    if (raw is Uint8List) {
+      bytes = raw;
+    } else if (raw is List) {
+      bytes = Uint8List.fromList(raw.cast<int>());
+    }
+    return Song(
+      title: m['title'] as String? ?? '',
+      artist: m['artist'] as String? ?? 'Unknown Artist',
+      album: m['album'] as String? ?? 'Imported',
+      fileName: m['fileName'] as String? ?? '',
+      duration: Duration(milliseconds: (m['durationMs'] as num?)?.toInt() ?? 0),
+      isFavorite: m['isFavorite'] as bool? ?? false,
+      playCount: (m['playCount'] as num?)?.toInt() ?? 0,
+      sampleRateHz: (m['sampleRateHz'] as num?)?.toInt() ?? 44100,
+      bitDepth: (m['bitDepth'] as num?)?.toInt() ?? 16,
+      dateAdded: DateTime.tryParse(m['dateAdded'] as String? ?? '') ?? DateTime.now(),
+      audioBytes: bytes,
+    );
+  }
 }

@@ -42,7 +42,7 @@ class SongTile extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 14),
-            // Title + artist
+            // Title + artist + audio info
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -63,6 +63,14 @@ class SongTile extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    song.audioInfoLabel,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant
+                          .withValues(alpha: 0.6),
                     ),
                   ),
                 ],

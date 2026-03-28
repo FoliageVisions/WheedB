@@ -58,15 +58,18 @@ class MusicPlayerController extends ChangeNotifier {
 
     _player = AudioPlayer();
 
-    _handler = await AudioService.init<WheedBAudioHandler>(
-      builder: () => WheedBAudioHandler(_player!),
-      config: const AudioServiceConfig(
-        androidNotificationChannelId: 'com.wheedb.audio',
-        androidNotificationChannelName: 'WheedB Playback',
-        androidNotificationOngoing: true,
-        androidStopForegroundOnPause: true,
-      ),
-    );
+    // AudioService uses native platform channels — skip on web.
+    if (!kIsWeb) {
+      _handler = await AudioService.init<WheedBAudioHandler>(
+        builder: () => WheedBAudioHandler(_player!),
+        config: const AudioServiceConfig(
+          androidNotificationChannelId: 'com.wheedb.audio',
+          androidNotificationChannelName: 'WheedB Playback',
+          androidNotificationOngoing: true,
+          androidStopForegroundOnPause: true,
+        ),
+      );
+    }
 
     // Position stream → update _position + notify UI.
     _subs.add(_player!.positionStream.listen((pos) {
@@ -125,7 +128,11 @@ class MusicPlayerController extends ChangeNotifier {
 
       // Web imports carry in-memory bytes; mobile imports carry file paths.
       if (s.audioBytes != null) {
-        return _BytesAudioSource(s.audioBytes!, tag: tag);
+        return _BytesAudioSource(
+          s.audioBytes!,
+          tag: tag,
+          contentType: _BytesAudioSource.mimeForExtension(s.fileName),
+        );
       }
 
       // For device files the fileName is an absolute path or content URI.
@@ -284,8 +291,25 @@ class AudioInfo {
 // ignore: subtype_of_sealed_class
 class _BytesAudioSource extends StreamAudioSource {
   final Uint8List _bytes;
+  final String _contentType;
 
-  _BytesAudioSource(this._bytes, {super.tag});
+  _BytesAudioSource(this._bytes, {super.tag, String? contentType})
+      : _contentType = contentType ?? 'audio/mpeg';
+
+  /// Infers a MIME type from a file extension.
+  static String mimeForExtension(String fileName) {
+    final ext = fileName.split('.').last.toLowerCase();
+    return switch (ext) {
+      'mp3' => 'audio/mpeg',
+      'flac' => 'audio/flac',
+      'wav' => 'audio/wav',
+      'aac' || 'm4a' => 'audio/mp4',
+      'ogg' => 'audio/ogg',
+      'aiff' => 'audio/aiff',
+      'wma' => 'audio/x-ms-wma',
+      _ => 'audio/mpeg',
+    };
+  }
 
   @override
   Future<StreamAudioResponse> request([int? start, int? end]) async {
@@ -298,7 +322,7 @@ class _BytesAudioSource extends StreamAudioSource {
       stream: Stream.value(
         _bytes.sublist(effectiveStart, effectiveEnd),
       ),
-      contentType: 'audio/mpeg',
+      contentType: _contentType,
     );
   }
 }

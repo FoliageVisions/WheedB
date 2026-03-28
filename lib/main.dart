@@ -95,7 +95,8 @@ class _HomePageState extends State<HomePage> {
         _loading = false;
       });
     } else {
-      // Web: restore cached library from IndexedDB.
+      // Web: initialise the player (skip AudioService) and restore cached library.
+      await _playback.init();
       final cachedSongs = await WebLibraryCache.instance.loadSongs();
       setState(() {
         _deviceSongs = cachedSongs;
