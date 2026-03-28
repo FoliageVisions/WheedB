@@ -431,8 +431,10 @@ class _HomePageState extends State<HomePage> {
       int skipped = 0;
 
       for (final file in result.files) {
-        // On mobile we need a path; on web we need bytes.
-        final hasPath = file.path != null && file.path!.isNotEmpty;
+        // On web, accessing file.path throws — only use bytes.
+        // On mobile, we need a path; bytes are optional.
+        final String? filePath = kIsWeb ? null : file.path;
+        final hasPath = filePath != null && filePath.isNotEmpty;
         final hasBytes = file.bytes != null && file.bytes!.isNotEmpty;
 
         if (!hasPath && !hasBytes) {
@@ -461,7 +463,7 @@ class _HomePageState extends State<HomePage> {
           artist: artist,
           album: 'Imported',
           fileName: fileName,
-          filePath: file.path,
+          filePath: filePath,
           audioBytes: kIsWeb ? file.bytes : null,
         ));
 
