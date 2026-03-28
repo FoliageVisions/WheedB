@@ -411,7 +411,10 @@ class _HomePageState extends State<HomePage> {
       debugPrint('[WheedB Import] Opening file picker (kIsWeb=$kIsWeb)');
 
       final result = await FilePicker.platform.pickFiles(
-        type: FileType.audio,
+        type: FileType.custom,
+        allowedExtensions: [
+          'mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg', 'wma', 'aiff', 'alac',
+        ],
         allowMultiple: true,
         withData: kIsWeb, // Bytes needed on web; mobile uses file paths.
       );
