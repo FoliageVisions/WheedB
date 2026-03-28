@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import '../models/playlist.dart';
 import '../models/song.dart';
@@ -309,7 +310,7 @@ class _AlbumArt extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Prefer local file (extracted cover art).
-    if (localPath != null && localPath!.isNotEmpty) {
+    if (localPath != null && localPath!.isNotEmpty && !kIsWeb) {
       return Image.file(
         File(localPath!),
         width: double.infinity,

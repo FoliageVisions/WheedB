@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import '../models/playlist.dart';
 import '../models/smart_playlist_generator.dart';
@@ -202,7 +203,7 @@ class _ManualPlaylistTile extends StatelessWidget {
               child: SizedBox(
                 width: 48,
                 height: 48,
-                child: playlist.coverArtPath != null
+                child: playlist.coverArtPath != null && !kIsWeb
                     ? Image.file(
                         File(playlist.coverArtPath!),
                         fit: BoxFit.cover,

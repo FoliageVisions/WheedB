@@ -1,5 +1,4 @@
-import 'dart:io';
-
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 
 /// A bottom sheet that presents the "Import Music" action.
@@ -21,17 +20,29 @@ class ImportMusicSheet extends StatelessWidget {
   }
 
   String get _platformLabel {
-    if (Platform.isIOS) return 'iPhone';
-    if (Platform.isAndroid) return 'Android device';
-    if (Platform.isMacOS) return 'Mac';
-    if (Platform.isWindows) return 'Windows PC';
-    if (Platform.isLinux) return 'Linux device';
-    return 'device';
+    if (kIsWeb) return 'browser';
+    return defaultTargetPlatform == TargetPlatform.iOS
+        ? 'iPhone'
+        : defaultTargetPlatform == TargetPlatform.android
+            ? 'Android device'
+            : defaultTargetPlatform == TargetPlatform.macOS
+                ? 'Mac'
+                : defaultTargetPlatform == TargetPlatform.windows
+                    ? 'Windows PC'
+                    : defaultTargetPlatform == TargetPlatform.linux
+                        ? 'Linux device'
+                        : 'device';
   }
 
   IconData get _platformIcon {
-    if (Platform.isIOS || Platform.isMacOS) return Icons.apple_rounded;
-    if (Platform.isWindows) return Icons.laptop_windows_rounded;
+    if (kIsWeb) return Icons.language_rounded;
+    if (defaultTargetPlatform == TargetPlatform.iOS ||
+        defaultTargetPlatform == TargetPlatform.macOS) {
+      return Icons.apple_rounded;
+    }
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      return Icons.laptop_windows_rounded;
+    }
     return Icons.phone_android_rounded;
   }
 

@@ -1,5 +1,5 @@
 import 'dart:io';
-
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
@@ -73,16 +73,18 @@ class _HomePageState extends State<HomePage> {
   Future<void> _initPlayer() async {
     await _playback.init();
 
-    final granted = await _scanner.requestPermission();
-    if (granted) {
-      final songs = await _scanner.scanAllSongs();
-      final playlists = await DatabaseHelper.instance.loadPlaylists();
-      setState(() {
-        _deviceSongs = songs;
-        _manualPlaylists = playlists;
-        _loading = false;
-      });
-      return;
+    if (!kIsWeb) {
+      final granted = await _scanner.requestPermission();
+      if (granted) {
+        final songs = await _scanner.scanAllSongs();
+        final playlists = await DatabaseHelper.instance.loadPlaylists();
+        setState(() {
+          _deviceSongs = songs;
+          _manualPlaylists = playlists;
+          _loading = false;
+        });
+        return;
+      }
     }
 
     final playlists = await DatabaseHelper.instance.loadPlaylists();
@@ -551,6 +553,8 @@ class _HomePageState extends State<HomePage> {
       imageQuality: 85,
     );
     if (image == null) return;
+
+    if (kIsWeb) return; // File I/O not available on web
 
     final appDir = await getApplicationDocumentsDirectory();
     final type = isPlaylist ? 'playlist' : 'album';
